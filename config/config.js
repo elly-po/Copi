@@ -1,103 +1,137 @@
 const fs = require('fs-extra');
 const path = require('path');
+const crypto = require('crypto');
 
 class Config {
     constructor() {
-        this.configPath = path.join(__dirname, '..', 'data', 'config.json');
-        this.defaultConfig = {
+        // Path configuration
+        this.configDir = path.join(__dirname, '..', 'data');
+        this.configPath = path.join(this.configDir, 'config.json');
+        this.secretsPath = path.join(this.configDir, 'secrets.enc');
+
+        // Initialize with defaults
+        this.defaultConfig = this.buildDefaultConfig();
+        
+        // Ensure directories exist
+        this.initializeSync();
+    }
+
+    buildDefaultConfig() {
+        return {
             solana: {
-                rpcUrl: process.env.SOLANA_RPC_URL || `https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}`,
-                wsUrl: null, // Disabled for free tier
-                commitment: 'confirmed', // Faster confirmation
-                pollInterval: 15000 // 15 seconds
+                rpcUrl: process.env.SOLANA_RPC_URL || 
+                       (process.env.HELIUS_API_KEY 
+                        ? `https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}`
+                        : 'https://api.mainnet-beta.solana.com'),
+                wsUrl: process.env.HELIUS_WS_URL || null,
+                commitment: 'confirmed',
+                pollInterval: parseInt(process.env.POLL_INTERVAL) || 15000
             },
             jupiter: {
                 apiUrl: 'https://quote-api.jup.ag/v6',
                 swapUrl: 'https://quote-api.jup.ag/v6/swap',
-                maxRequestsPerMinute: 30 // Jupiter API limits
+                maxRequestsPerMinute: parseInt(process.env.JUPITER_RATE_LIMIT) || 30
             },
             telegram: {
-                botToken: process.env.TELEGRAM_BOT_TOKEN,
+                botToken: process.env.TELEGRAM_BOT_TOKEN || null,
                 rateLimit: {
                     windowMs: 60000,
-                    max: 15 // Reduced for free tier
+                    max: parseInt(process.env.TELEGRAM_RATE_LIMIT) || 15
                 }
             },
             trading: {
-                maxSlippage: 5,
-                defaultTradeAmount: 0.01,
-                maxTradesPerToken: 3, // Reduced for free tier
-                defaultDelay: 2000, // Increased delay
-                minTradeAmount: 0.001,
-                maxTradeAmount: 5 // Reduced max
+                maxSlippage: parseFloat(process.env.MAX_SLIPPAGE) || 5,
+                defaultTradeAmount: parseFloat(process.env.DEFAULT_TRADE_AMOUNT) || 0.01,
+                maxTradesPerToken: parseInt(process.env.MAX_TRADES_PER_TOKEN) || 3,
+                defaultDelay: parseInt(process.env.DEFAULT_DELAY) || 2000,
+                minTradeAmount: parseFloat(process.env.MIN_TRADE_AMOUNT) || 0.001,
+                maxTradeAmount: parseFloat(process.env.MAX_TRADE_AMOUNT) || 5
             },
             security: {
-                encryptionKey: process.env.ENCRYPTION_KEY,
-                rpcRateLimit: 15 // Requests per second
+                encryptionKey: process.env.ENCRYPTION_KEY || this.generateTempKey(),
+                rpcRateLimit: parseInt(process.env.RPC_RATE_LIMIT) || 15
             }
         };
+    }
 
-        // Initialize synchronously
-        this.initializeSync();
+    generateTempKey() {
+        const tempKey = crypto.randomBytes(32).toString('hex');
+        console.warn('⚠️ Using temporary encryption key - DO NOT USE IN PRODUCTION');
+        return tempKey;
     }
 
     initializeSync() {
-        // Create data directory if needed
-        fs.ensureDirSync(path.dirname(this.configPath));
-        
-        // Initialize config file if it doesn't exist
-        if (!fs.existsSync(this.configPath)) {
-            fs.writeJsonSync(this.configPath, this.defaultConfig, { spaces: 2 });
+        try {
+            // Ensure data directory exists
+            if (!fs.existsSync(this.configDir)) {
+                fs.mkdirSync(this.configDir, { recursive: true });
+            }
+
+            // Initialize config file if missing
+            if (!fs.existsSync(this.configPath)) {
+                fs.writeJsonSync(this.configPath, this.defaultConfig, { spaces: 2 });
+            }
+
+            // Validate critical configuration
+            this.validateSync();
+        } catch (error) {
+            console.error('🚨 Config initialization failed:', error);
+            throw error;
         }
     }
 
-    async ensureConfigExists() {
+    validateSync() {
+        const config = this.getSync();
+        
+        // Check Telegram token
+        if (!config.telegram.botToken) {
+            throw new Error('Missing TELEGRAM_BOT_TOKEN in .env');
+        }
+
+        // Check encryption key in production
+        if (process.env.NODE_ENV === 'production' && 
+            config.security.encryptionKey === this.defaultConfig.security.encryptionKey) {
+            throw new Error('ENCRYPTION_KEY must be set in production');
+        }
+
+        return true;
+    }
+
+    getSync() {
         try {
-            await fs.ensureDir(path.dirname(this.configPath));
-            if (!await fs.pathExists(this.configPath)) {
-                await fs.writeJson(this.configPath, this.defaultConfig, { spaces: 2 });
-            }
+            const fileConfig = fs.existsSync(this.configPath) 
+                ? fs.readJsonSync(this.configPath) 
+                : {};
+            return { ...this.defaultConfig, ...fileConfig };
         } catch (error) {
-            console.error('Error ensuring config exists:', error);
-            throw error;
+            console.error('Failed to read config synchronously:', error);
+            return this.defaultConfig;
         }
     }
 
     async get() {
         try {
-            const config = await fs.readJson(this.configPath);
-            return { ...this.defaultConfig, ...config };
+            const fileConfig = await fs.readJson(this.configPath);
+            return { ...this.defaultConfig, ...fileConfig };
         } catch (error) {
-            console.error('Error reading config:', error);
+            console.error('Failed to read config:', error);
             return this.defaultConfig;
         }
     }
 
     async update(newConfig) {
         try {
-            const currentConfig = await this.get();
-            const updatedConfig = { ...currentConfig, ...newConfig };
-            await fs.writeJson(this.configPath, updatedConfig, { spaces: 2 });
-            return updatedConfig;
+            const current = await this.get();
+            const updated = { ...current, ...newConfig };
+            await fs.writeJson(this.configPath, updated, { spaces: 2 });
+            return updated;
         } catch (error) {
-            console.error('Error updating config:', error);
+            console.error('Failed to update config:', error);
             throw error;
-        }
-    }
-
-    validateEnvironment() {
-        const required = [
-            'TELEGRAM_BOT_TOKEN',
-            'ENCRYPTION_KEY'
-        ];
-
-        const missing = required.filter(env => !process.env[env]);
-        if (missing.length > 0) {
-            throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
         }
     }
 }
 
-// Export initialized instance
-const configInstance = new Config();
-module.exports = configInstance;
+// Initialize and export instance
+const config = new Config();
+module.exports = config;
