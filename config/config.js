@@ -4,15 +4,8 @@ const crypto = require('crypto');
 
 class Config {
     constructor() {
-        // Path configuration
-        this.configDir = path.join(__dirname, '..', 'data');
-        this.configPath = path.join(this.configDir, 'config.json');
-        this.secretsPath = path.join(this.configDir, 'secrets.enc');
-
-        // Initialize with defaults
+        this.configPath = path.join(__dirname, '..', 'data', 'config.json');
         this.defaultConfig = this.buildDefaultConfig();
-        
-        // Ensure directories exist
         this.initializeSync();
     }
 
@@ -34,6 +27,7 @@ class Config {
             },
             telegram: {
                 botToken: process.env.TELEGRAM_BOT_TOKEN || null,
+                adminChatIds: process.env.ADMIN_CHAT_IDS || '',
                 rateLimit: {
                     windowMs: 60000,
                     max: parseInt(process.env.TELEGRAM_RATE_LIMIT) || 15
@@ -45,53 +39,53 @@ class Config {
                 maxTradesPerToken: parseInt(process.env.MAX_TRADES_PER_TOKEN) || 3,
                 defaultDelay: parseInt(process.env.DEFAULT_DELAY) || 2000,
                 minTradeAmount: parseFloat(process.env.MIN_TRADE_AMOUNT) || 0.001,
-                maxTradeAmount: parseFloat(process.env.MAX_TRADE_AMOUNT) || 5
+                maxTradeAmount: parseFloat(process.env.MAX_TRADE_AMOUNT) || 5,
+                maxWallets: parseInt(process.env.MAX_WALLETS) || 3
             },
             security: {
                 encryptionKey: process.env.ENCRYPTION_KEY || this.generateTempKey(),
-                rpcRateLimit: parseInt(process.env.RPC_RATE_LIMIT) || 15
+                requireSecureKey: process.env.NODE_ENV === 'production'
             }
         };
     }
 
     generateTempKey() {
-        const tempKey = crypto.randomBytes(32).toString('hex');
-        console.warn('⚠️ Using temporary encryption key - DO NOT USE IN PRODUCTION');
-        return tempKey;
+        if (process.env.NODE_ENV === 'production') {
+            return null; // Will trigger validation error
+        }
+        const key = crypto.randomBytes(32).toString('base64');
+        console.warn('⚠️  Using TEMPORARY encryption key (DO NOT USE IN PRODUCTION):', key);
+        return key;
     }
 
     initializeSync() {
         try {
-            // Ensure data directory exists
-            if (!fs.existsSync(this.configDir)) {
-                fs.mkdirSync(this.configDir, { recursive: true });
-            }
-
-            // Initialize config file if missing
+            fs.ensureDirSync(path.dirname(this.configPath));
             if (!fs.existsSync(this.configPath)) {
                 fs.writeJsonSync(this.configPath, this.defaultConfig, { spaces: 2 });
             }
-
-            // Validate critical configuration
             this.validateSync();
         } catch (error) {
-            console.error('🚨 Config initialization failed:', error);
+            console.error('🚨 Config initialization failed:', error.message);
+            if (error.message.includes('ENCRYPTION_KEY')) {
+                console.log('\n🔧 How to fix:');
+                console.log('1. Generate key: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"');
+                console.log('2. Add to Render.com environment as ENCRYPTION_KEY');
+            }
             throw error;
         }
     }
 
     validateSync() {
+        const isProduction = process.env.NODE_ENV === 'production';
         const config = this.getSync();
-        
-        // Check Telegram token
-        if (!config.telegram.botToken) {
-            throw new Error('Missing TELEGRAM_BOT_TOKEN in .env');
+
+        if (isProduction && !process.env.ENCRYPTION_KEY) {
+            throw new Error('ENCRYPTION_KEY must be set in production');
         }
 
-        // Check encryption key in production
-        if (process.env.NODE_ENV === 'production' && 
-            config.security.encryptionKey === this.defaultConfig.security.encryptionKey) {
-            throw new Error('ENCRYPTION_KEY must be set in production');
+        if (!config.telegram.botToken) {
+            throw new Error('TELEGRAM_BOT_TOKEN is required');
         }
 
         return true;
@@ -104,7 +98,7 @@ class Config {
                 : {};
             return { ...this.defaultConfig, ...fileConfig };
         } catch (error) {
-            console.error('Failed to read config synchronously:', error);
+            console.error('Config read failed:', error);
             return this.defaultConfig;
         }
     }
@@ -114,7 +108,7 @@ class Config {
             const fileConfig = await fs.readJson(this.configPath);
             return { ...this.defaultConfig, ...fileConfig };
         } catch (error) {
-            console.error('Failed to read config:', error);
+            console.error('Async config read failed:', error);
             return this.defaultConfig;
         }
     }
@@ -126,12 +120,10 @@ class Config {
             await fs.writeJson(this.configPath, updated, { spaces: 2 });
             return updated;
         } catch (error) {
-            console.error('Failed to update config:', error);
+            console.error('Config update failed:', error);
             throw error;
         }
     }
 }
 
-// Initialize and export instance
-const config = new Config();
-module.exports = config;
+module.exports = new Config();
