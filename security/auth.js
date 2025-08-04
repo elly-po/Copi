@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import config from '../config/config.js';
+import config from '../config/index.js';
 
 // AES-256-CBC Encryption
 function encryptPrivateKey(privateKey, encryptionKey = null) {
