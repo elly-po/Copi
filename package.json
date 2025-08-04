@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Solana trading bot that monitors & mimics alpha wallet trades in real time",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js"
@@ -19,7 +20,8 @@
     "fs-extra": "^11.2.0"
   },
   "devDependencies": {
-    "typescript": "^5.4.5","nodemon": "^3.0.2",
+    "typescript": "^5.4.5",
+    "nodemon": "^3.0.2",
     "fastestsmallesttextencoderdecoder": "^1.0.22",
     "node-fetch": "^2.6.7"
   },
@@ -27,5 +29,3 @@
   "author": "e",
   "license": "MIT"
 }
-
-
