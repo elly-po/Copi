@@ -126,4 +126,4 @@ class Config {
     }
 }
 
-exports default Config;
+export default Config;
