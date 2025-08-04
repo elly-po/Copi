@@ -1,5 +1,5 @@
 import axios from 'axios';
-import config from '../config/config.js';
+import config from '../config/index.js';
 import walletManager from '../wallet/walletManager.js';
 import database from '../database/database.js'; // Make sure database exports a default
 
