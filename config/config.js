@@ -6,7 +6,7 @@ class Config {
         this.configPath = path.join(__dirname, '..', 'data', 'config.json');
         this.defaultConfig = {
             solana: {
-                rpcUrl: process.env.SOLANA_RPC_URL || 'https://mainnet.helius-rpc.com/?api-key=YOUR_KEY',
+                rpcUrl: process.env.SOLANA_RPC_URL || `https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}`,
                 wsUrl: null, // Disabled for free tier
                 commitment: 'confirmed', // Faster confirmation
                 pollInterval: 15000 // 15 seconds
