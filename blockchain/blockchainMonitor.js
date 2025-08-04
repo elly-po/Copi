@@ -1,9 +1,9 @@
 const { Connection, PublicKey } = require('@solana/web3.js');
 const EventEmitter = require('events');
-const config = require('../config/config');
-const database = require('../database/database');
-const { parseSwapTransaction } = require('../utils/transactionParser');
-const rateLimiter = require('../utils/rateLimiter');
+const config = require('../config/config.js');
+const database = require('../database/database.js');
+const { parseSwapTransaction } = require('../utils/transactionParser.js');
+const rateLimiter = require('../utils/rateLimiter.js');
 
 class BlockchainMonitor extends EventEmitter {
     constructor() {
