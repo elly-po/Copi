@@ -9,7 +9,7 @@ CopiAlpha
 A high-performance trading bot that automatically mimics trades from expert Solana wallets in real-time, powered by Helius and Jupiter APIs.
 
 get it here
-https://t.me/@copiAlpha_bot
+https://t.me/copiAlpha_bot
 
 ## 🔍 Features
 
