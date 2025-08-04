@@ -1,6 +1,6 @@
 require('dotenv').config(); // Must be first
-const config = require('./config/config');
-const database = require('./database/database');
+const config = require('./config/config.js');
+const database = require('./database/database.js');
 
 class App {
     constructor() {
@@ -48,8 +48,8 @@ class App {
 
     async startServices() {
         const [telegram, blockchain] = await Promise.all([
-            import('./telegrambot/grammy'),
-            import('./blockchain/blockchainMonitor')
+            import('./telegrambot/grammy.js'),
+            import('./blockchain/blockchainMonitor.js')
         ]);
         
         await Promise.all([
@@ -90,7 +90,7 @@ class App {
         clearInterval(this.cleanupInterval);
         
         try {
-            const blockchain = await import('./blockchain/blockchainMonitor');
+            const blockchain = await import('./blockchain/blockchainMonitor.js');
             await blockchain.default.stopMonitoring();
         } catch (error) {
             console.error('Shutdown error:', error);
