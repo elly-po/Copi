@@ -6,7 +6,6 @@ dotenv.config(); // Load .env first
 import Config from './config/index.js';
 import database from './database/database.js';
 
-const config = new Config();
 
 class App {
   constructor() {
