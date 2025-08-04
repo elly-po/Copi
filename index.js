@@ -3,7 +3,7 @@
 import dotenv from 'dotenv';
 dotenv.config(); // Must be first
 
-import config from './config/config.js';
+import config from './config/index.js';
 import database from './database/database.js';
 
 class App {
