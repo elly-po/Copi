@@ -1,52 +1,99 @@
+require('dotenv').config(); // Must be first
 const config = require('./config/config');
-const telegram = require('./telegrambot/grammy');
-const blockchain = require('./blockchain/blockchainMonitor');
-const tradeExecutor = require('./services/tradeExecutor');
 const database = require('./database/database');
 const rateLimiter = require('./utils/rateLimiter');
 
 class App {
+    constructor() {
+        this.cleanupInterval = null;
+    }
+
     async start() {
         try {
-            // Validate environment
-            config.validateEnvironment();
-            
-            // Initialize modules
+            // Phase 1: Critical initialization
+            console.log('⚙️ Initializing core systems...');
+            config.validateSync(); // Synchronous validation
             await database.initializeDatabase();
-            telegram.start();
             
-            // Start services with free-tier limits
-            await this.startWithLimits();
+            // Phase 2: Service startup
+            console.log('🚀 Starting services...');
+            await this.startServices();
             
-            console.log('🚀 Alpha Mimic Bot (Free Tier) is operational');
-            console.log('⚠️ Tracking limit: 3 wallets max');
+            // Phase 3: Operational
+            console.log('✅ Alpha Mimic Bot is fully operational');
+            this.scheduleMaintenance();
             
-            // Maintenance jobs
-            setInterval(() => database.cleanup(), 3600000);
         } catch (error) {
-            console.error('❌ Failed to start:', error);
+            console.error('💥 Failed to start:', error.message);
             process.exit(1);
         }
     }
 
-    async startWithLimits() {
-        // Enforce free-tier wallet limit
-        const wallets = await database.getAllActiveAlphaWallets();
-        if (wallets.length > 3) {
-            console.warn('Free tier only supports 3 wallets! Using first 3');
-            await database.deactivateWallets(wallets.slice(3));
-        }
-
-        // Start monitoring with rate limits
+    async startServices() {
+        // Enforce free-tier limits
+        await this.enforceLimits();
+        
+        // Start services in parallel with rate limiting
         await Promise.all([
-            rateLimiter.check('rpc-init', 5),
-            blockchain.startMonitoring()
+            rateLimiter.check('service-init', 3),
+            this.startTelegramBot(),
+            this.startBlockchainMonitor()
         ]);
     }
 
+    async enforceLimits() {
+        const maxWallets = config.getSync().trading.maxWallets || 3;
+        const wallets = await database.getAllActiveAlphaWallets();
+        
+        if (wallets.length > maxWallets) {
+            console.warn(`Free tier limit: Deactivating wallets beyond ${maxWallets}`);
+            await database.deactivateWallets(wallets.slice(maxWallets));
+        }
+    }
+
+    async startTelegramBot() {
+        try {
+            const telegram = require('./telegrambot/grammy');
+            await telegram.start();
+        } catch (error) {
+            console.error('Failed to start Telegram bot:', error);
+            throw error;
+        }
+    }
+
+    async startBlockchainMonitor() {
+        try {
+            const blockchain = require('./blockchain/blockchainMonitor');
+            await blockchain.startMonitoring();
+        } catch (error) {
+            console.error('Failed to start blockchain monitor:', error);
+            throw error;
+        }
+    }
+
+    scheduleMaintenance() {
+        // Hourly cleanup
+        this.cleanupInterval = setInterval(async () => {
+            try {
+                await database.cleanup();
+            } catch (error) {
+                console.error('Cleanup job failed:', error);
+            }
+        }, 3600000);
+    }
+
     async gracefulShutdown() {
-        console.log('🛑 Graceful shutdown...');
-        await blockchain.stopMonitoring();
+        console.log('\n🛑 Shutting down gracefully...');
+        
+        clearInterval(this.cleanupInterval);
+        
+        try {
+            const blockchain = require('./blockchain/blockchainMonitor');
+            await blockchain.stopMonitoring();
+        } catch (error) {
+            console.error('Failed to stop blockchain monitor:', error);
+        }
+        
         process.exit(0);
     }
 }
@@ -55,8 +102,5 @@ class App {
 process.on('SIGTERM', () => new App().gracefulShutdown());
 process.on('SIGINT', () => new App().gracefulShutdown());
 
-// Start with error handling
-new App().start().catch(err => {
-    console.error('Fatal error:', err);
-    process.exit(1);
-});
+// Start the application
+new App().start();
