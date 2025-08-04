@@ -1,6 +1,7 @@
-const axios = require('axios');
-const config = require('../config/config.js');
-const walletManager = require('../wallet/walletManager.js');
+import axios from 'axios';
+import config from '../config/config.js';
+import walletManager from '../wallet/walletManager.js';
+import database from '../database/database.js'; // Make sure database exports a default
 
 class JupiterService {
   constructor() {
@@ -14,11 +15,11 @@ class JupiterService {
         params: {
           inputMint,
           outputMint,
-          amount: amount * 1e9, // SOL to lamports
-          slippageBps: slippage * 100 // % to basis points
+          amount: amount * 1e9, // Convert SOL to lamports
+          slippageBps: slippage * 100 // Convert slippage % to basis points
         }
       });
-      
+
       return {
         inputAmount: response.data.inAmount,
         outputAmount: response.data.outAmount,
@@ -34,9 +35,12 @@ class JupiterService {
     try {
       const user = await database.getUser(userId);
       if (!user?.wallet) throw new Error('User wallet not connected');
-      
+
       const { publicKey, keypair } = walletManager.importWallet(
-        walletManager.decryptPrivateKey(user.wallet.encryptedKey, config.security.encryptionKey)
+        walletManager.decryptPrivateKey(
+          user.wallet.encryptedKey,
+          config.security.encryptionKey
+        )
       );
 
       const swapResponse = await axios.post(`${this.swapURL}`, {
@@ -47,7 +51,7 @@ class JupiterService {
 
       const swapTransaction = swapResponse.data.swapTransaction;
       const rawTransaction = Buffer.from(swapTransaction, 'base64');
-      
+
       const txid = await walletManager.sendRawTransaction(rawTransaction, keypair);
       return txid;
     } catch (error) {
@@ -67,4 +71,5 @@ class JupiterService {
   }
 }
 
-module.exports = new JupiterService();
+const jupiterService = new JupiterService();
+export default jupiterService;
