@@ -1,6 +1,6 @@
-const fs = require('fs-extra');
-const path = require('path');
-const crypto = require('crypto');
+import fs from 'fs-extra';
+import path from 'path';
+import crypto from 'crypto';
 
 class Config {
     constructor() {
@@ -126,4 +126,4 @@ class Config {
     }
 }
 
-module.exports = new Config();
+exports default Config
