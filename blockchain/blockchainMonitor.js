@@ -1,111 +1,35 @@
-const WebSocket = require('ws');
-const { Connection, PublicKey, Transaction } = require('@solana/web3.js');
+const { Connection, PublicKey } = require('@solana/web3.js');
 const EventEmitter = require('events');
 const config = require('../config/config');
 const database = require('../database/database');
-const walletManager = require('../wallet/walletManager');
 const { parseSwapTransaction } = require('../utils/transactionParser');
+const rateLimiter = require('../utils/rateLimiter');
 
 class BlockchainMonitor extends EventEmitter {
     constructor() {
         super();
         this.connection = null;
-        this.wsConnection = null;
         this.monitoredWallets = new Set();
         this.isMonitoring = false;
-        this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 5;
-        this.reconnectDelay = 5000;
-        this.pingInterval = 30000;
-        this.pingTimeout = null;
+        this.pollInterval = 15000; // 15 seconds to stay under free tier limits
+        this.pollTimer = null;
+        this.lastSignatures = new Map(); // Track last seen TX per wallet
         
-        this.initializeConnections();
+        this.initializeConnection();
     }
 
-    async initializeConnections() {
+    async initializeConnection() {
         try {
             const configData = await config.get();
-            
             this.connection = new Connection(
                 configData.solana.rpcUrl,
                 configData.solana.commitment
             );
-            
-            console.log('✅ Blockchain monitor initialized');
+            console.log('✅ Blockchain monitor initialized (RPC polling mode)');
         } catch (error) {
             console.error('❌ Failed to initialize blockchain monitor:', error);
             throw error;
         }
-    }
-
-    async connectWebSocket() {
-        const configData = await config.get();
-        
-        if (this.wsConnection) {
-            this.wsConnection.close();
-        }
-
-        this.wsConnection = new WebSocket(configData.solana.wsUrl);
-
-        this.wsConnection.on('open', () => {
-            console.log('🔌 WebSocket connected to Helius');
-            this.reconnectAttempts = 0;
-            this.setupPing();
-            this.emit('ws-connected');
-        });
-
-        this.wsConnection.on('message', (data) => {
-            try {
-                const message = JSON.parse(data);
-                this.handleWebSocketMessage(message);
-            } catch (error) {
-                console.error('Error parsing WebSocket message:', error);
-            }
-        });
-
-        this.wsConnection.on('close', () => {
-            console.log('🔴 WebSocket disconnected');
-            clearTimeout(this.pingTimeout);
-            this.handleReconnect();
-        });
-
-        this.wsConnection.on('error', (error) => {
-            console.error('WebSocket error:', error);
-        });
-    }
-
-    setupPing() {
-        this.pingTimeout = setTimeout(() => {
-            if (this.wsConnection.readyState === WebSocket.OPEN) {
-                this.wsConnection.ping();
-                this.setupPing();
-            }
-        }, this.pingInterval);
-    }
-
-    async handleReconnect() {
-        if (!this.isMonitoring || this.reconnectAttempts >= this.maxReconnectAttempts) {
-            console.log('Max reconnection attempts reached, stopping monitor');
-            this.isMonitoring = false;
-            return;
-        }
-
-        this.reconnectAttempts++;
-        const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
-        
-        console.log(`Reconnecting attempt ${this.reconnectAttempts} in ${delay}ms...`);
-        
-        setTimeout(async () => {
-            try {
-                await this.connectWebSocket();
-                if (this.wsConnection.readyState === WebSocket.OPEN) {
-                    await this.resubscribeAll();
-                }
-            } catch (error) {
-                console.error('Reconnection failed:', error);
-                this.handleReconnect();
-            }
-        }, delay);
     }
 
     async startMonitoring() {
@@ -116,9 +40,9 @@ class BlockchainMonitor extends EventEmitter {
 
         try {
             await this.loadMonitoredWallets();
-            await this.connectWebSocket();
             this.isMonitoring = true;
-            console.log('🚀 Blockchain monitoring started');
+            this.pollTimer = setInterval(() => this.pollWallets(), this.pollInterval);
+            console.log(`🚀 Started polling ${this.monitoredWallets.size} wallets every ${this.pollInterval/1000}s`);
         } catch (error) {
             console.error('❌ Failed to start monitoring:', error);
             this.isMonitoring = false;
@@ -127,13 +51,8 @@ class BlockchainMonitor extends EventEmitter {
 
     async stopMonitoring() {
         this.isMonitoring = false;
-        
-        if (this.wsConnection) {
-            this.wsConnection.close();
-            this.wsConnection = null;
-        }
-        
-        clearTimeout(this.pingTimeout);
+        if (this.pollTimer) clearInterval(this.pollTimer);
+        this.pollTimer = null;
         console.log('🛑 Blockchain monitoring stopped');
     }
 
@@ -144,6 +63,7 @@ class BlockchainMonitor extends EventEmitter {
             
             alphaWallets.forEach(wallet => {
                 this.monitoredWallets.add(wallet.address);
+                this.lastSignatures.set(wallet.address, null); // Initialize tracking
             });
             
             console.log(`📊 Loaded ${this.monitoredWallets.size} alpha wallets to monitor`);
@@ -152,77 +72,42 @@ class BlockchainMonitor extends EventEmitter {
         }
     }
 
-    async subscribeToWallet(walletAddress) {
-        if (!this.wsConnection || this.wsConnection.readyState !== WebSocket.OPEN) {
-            throw new Error('WebSocket not connected');
-        }
+    async pollWallets() {
+        if (!this.isMonitoring) return;
 
-        if (!walletManager.isValidWalletAddress(walletAddress)) {
-            throw new Error(`Invalid wallet address: ${walletAddress}`);
-        }
-
-        try {
-            const subscriptionMessage = {
-                jsonrpc: "2.0",
-                id: 1,
-                method: "accountSubscribe",
-                params: [
-                    walletAddress,
-                    {
-                        encoding: "jsonParsed",
-                        commitment: "confirmed"
-                    }
-                ]
-            };
-
-            this.wsConnection.send(JSON.stringify(subscriptionMessage));
-            console.log(`👁️ Subscribed to wallet: ${walletAddress}`);
-        } catch (error) {
-            console.error(`Error subscribing to wallet ${walletAddress}:`, error);
-            throw error;
-        }
-    }
-
-    async resubscribeAll() {
-        console.log('Resubscribing to all monitored wallets...');
-        for (const wallet of this.monitoredWallets) {
+        for (const walletAddress of this.monitoredWallets) {
             try {
-                await this.subscribeToWallet(wallet);
-            } catch (error) {
-                console.error(`Failed to resubscribe to ${wallet}:`, error);
-            }
-        }
-    }
+                await rateLimiter.check('helius-rpc');
+                const signatures = await this.connection.getSignaturesForAddress(
+                    new PublicKey(walletAddress),
+                    { limit: 3 } // Minimal fetch for free tier
+                );
 
-    async handleWebSocketMessage(message) {
-        try {
-            // Handle subscription responses
-            if (message.result) {
-                return; // Subscription confirmation
-            }
+                const newTxs = signatures.filter(sig => 
+                    sig.signature !== this.lastSignatures.get(walletAddress)
+                );
 
-            // Handle account changes
-            if (message.params?.result?.value) {
-                const accountInfo = message.params.result.value;
-                const walletAddress = message.params.result.value.pubkey;
-                
-                if (this.monitoredWallets.has(walletAddress)) {
-                    await this.processWalletActivity(walletAddress, accountInfo);
+                if (newTxs.length > 0) {
+                    this.lastSignatures.set(walletAddress, newTxs[0].signature);
+                    await this.processNewTransactions(walletAddress, newTxs);
                 }
+            } catch (error) {
+                console.error(`Polling failed for ${walletAddress}:`, error);
+                // Implement exponential backoff if needed
             }
-        } catch (error) {
-            console.error('Error handling WebSocket message:', error);
         }
     }
 
-    async processWalletActivity(walletAddress, accountInfo) {
-        try {
-            // Get recent transactions
-            const transactions = await walletManager.getRecentSwaps(walletAddress, 5);
-            
-            for (const tx of transactions) {
-                const swapDetails = await parseSwapTransaction(tx.signature);
-                
+    async processNewTransactions(walletAddress, transactions) {
+        for (const tx of transactions) {
+            try {
+                await rateLimiter.check('helius-rpc');
+                const parsedTx = await this.connection.getParsedTransaction(
+                    tx.signature,
+                    { maxSupportedTransactionVersion: 0 }
+                );
+
+                const swapDetails = await parseSwapTransaction(parsedTx);
                 if (swapDetails && this.isValidSwap(swapDetails)) {
                     this.emit('swap-detected', {
                         wallet: walletAddress,
@@ -231,14 +116,13 @@ class BlockchainMonitor extends EventEmitter {
                         ...swapDetails
                     });
                 }
+            } catch (error) {
+                console.error(`Failed to process TX ${tx.signature}:`, error);
             }
-        } catch (error) {
-            console.error(`Error processing activity for ${walletAddress}:`, error);
         }
     }
 
     isValidSwap(swapDetails) {
-        // Basic validation - expand with your criteria
         return (
             swapDetails &&
             swapDetails.inputMint &&
@@ -251,19 +135,19 @@ class BlockchainMonitor extends EventEmitter {
     async addWalletToMonitor(walletAddress) {
         if (!this.monitoredWallets.has(walletAddress)) {
             this.monitoredWallets.add(walletAddress);
+            this.lastSignatures.set(walletAddress, null);
             
-            if (this.isMonitoring && this.wsConnection?.readyState === WebSocket.OPEN) {
-                await this.subscribeToWallet(walletAddress);
+            if (this.isMonitoring) {
+                console.log(`➕ Added wallet to polling: ${walletAddress}`);
             }
-            
-            console.log(`➕ Added wallet to monitor: ${walletAddress}`);
         }
     }
 
     async removeWalletFromMonitor(walletAddress) {
         if (this.monitoredWallets.has(walletAddress)) {
             this.monitoredWallets.delete(walletAddress);
-            console.log(`➖ Removed wallet from monitor: ${walletAddress}`);
+            this.lastSignatures.delete(walletAddress);
+            console.log(`➖ Removed wallet from monitoring: ${walletAddress}`);
         }
     }
 }
