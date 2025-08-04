@@ -1,8 +1,8 @@
 const { Bot, Keyboard, InlineKeyboard, session } = require('grammy');
-const config = require('../config/config');
-const database = require('../database/database');
-const walletManager = require('../wallet/walletManager');
-const { encryptPrivateKey } = require('../security/auth');
+const config = require('../config/config.js');
+const database = require('../database/database.js');
+const walletManager = require('../wallet/walletManager.js');
+const { encryptPrivateKey } = require('../security/auth.js');
 
 class TelegramBot {
   constructor() {
