@@ -1,7 +1,7 @@
 // utils/transactionParser.js
 
 import { Connection } from '@solana/web3.js';
-import config from '../config/config.js';
+import config from '../config/index.js';
 
 const JUPITER_PROGRAM_ID = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4';
 
