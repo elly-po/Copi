@@ -1,106 +1,111 @@
 require('dotenv').config(); // Must be first
 const config = require('./config/config');
 const database = require('./database/database');
-const rateLimiter = require('./utils/rateLimiter');
 
 class App {
     constructor() {
         this.cleanupInterval = null;
+        this.isShuttingDown = false;
     }
 
     async start() {
         try {
-            // Phase 1: Critical initialization
-            console.log('⚙️ Initializing core systems...');
-            config.validateSync(); // Synchronous validation
+            console.log('⚙️  Initializing Alpha Mimic Bot...');
+            
+            // Phase 1: Critical Systems
+            this.validateEnvironment();
             await database.initializeDatabase();
             
-            // Phase 2: Service startup
-            console.log('🚀 Starting services...');
+            // Phase 2: Services
             await this.startServices();
             
             // Phase 3: Operational
-            console.log('✅ Alpha Mimic Bot is fully operational');
+            console.log('✅ Bot is fully operational');
             this.scheduleMaintenance();
             
+            // Health check endpoint
+            this.setupHealthCheck();
+            
         } catch (error) {
-            console.error('💥 Failed to start:', error.message);
+            console.error('💥 Boot failed:', error.message);
             process.exit(1);
         }
     }
 
+    validateEnvironment() {
+        try {
+            config.validateSync();
+            console.log('🔐 Environment validated');
+        } catch (error) {
+            console.error('\n❌ Configuration error:', error.message);
+            if (error.message.includes('ENCRYPTION_KEY')) {
+                console.log('Generate one with:');
+                console.log('node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"');
+            }
+            throw error;
+        }
+    }
+
     async startServices() {
-        // Enforce free-tier limits
-        await this.enforceLimits();
+        const [telegram, blockchain] = await Promise.all([
+            import('./telegrambot/grammy'),
+            import('./blockchain/blockchainMonitor')
+        ]);
         
-        // Start services in parallel with rate limiting
         await Promise.all([
-            rateLimiter.check('service-init', 3),
-            this.startTelegramBot(),
-            this.startBlockchainMonitor()
+            telegram.default.start(),
+            blockchain.default.startMonitoring()
         ]);
     }
 
-    async enforceLimits() {
-        const maxWallets = config.getSync().trading.maxWallets || 3;
-        const wallets = await database.getAllActiveAlphaWallets();
-        
-        if (wallets.length > maxWallets) {
-            console.warn(`Free tier limit: Deactivating wallets beyond ${maxWallets}`);
-            await database.deactivateWallets(wallets.slice(maxWallets));
-        }
-    }
-
-    async startTelegramBot() {
-        try {
-            const telegram = require('./telegrambot/grammy');
-            await telegram.start();
-        } catch (error) {
-            console.error('Failed to start Telegram bot:', error);
-            throw error;
-        }
-    }
-
-    async startBlockchainMonitor() {
-        try {
-            const blockchain = require('./blockchain/blockchainMonitor');
-            await blockchain.startMonitoring();
-        } catch (error) {
-            console.error('Failed to start blockchain monitor:', error);
-            throw error;
-        }
-    }
-
     scheduleMaintenance() {
-        // Hourly cleanup
         this.cleanupInterval = setInterval(async () => {
             try {
                 await database.cleanup();
             } catch (error) {
                 console.error('Cleanup job failed:', error);
             }
-        }, 3600000);
+        }, 3600000); // Hourly
+    }
+
+    setupHealthCheck() {
+        if (process.env.HEALTH_CHECK_PORT) {
+            const express = require('express');
+            const app = express();
+            app.get('/health', (req, res) => {
+                res.status(this.isShuttingDown ? 503 : 200)
+                   .json({ status: this.isShuttingDown ? 'shutting_down' : 'healthy' });
+            });
+            app.listen(process.env.HEALTH_CHECK_PORT, () => {
+                console.log(`🩺 Health check available on port ${process.env.HEALTH_CHECK_PORT}`);
+            });
+        }
     }
 
     async gracefulShutdown() {
-        console.log('\n🛑 Shutting down gracefully...');
+        if (this.isShuttingDown) return;
+        this.isShuttingDown = true;
         
+        console.log('\n🛑 Shutting down gracefully...');
         clearInterval(this.cleanupInterval);
         
         try {
-            const blockchain = require('./blockchain/blockchainMonitor');
-            await blockchain.stopMonitoring();
+            const blockchain = await import('./blockchain/blockchainMonitor');
+            await blockchain.default.stopMonitoring();
         } catch (error) {
-            console.error('Failed to stop blockchain monitor:', error);
+            console.error('Shutdown error:', error);
         }
         
         process.exit(0);
     }
 }
 
-// Handle process termination
+// Signal handling
 process.on('SIGTERM', () => new App().gracefulShutdown());
 process.on('SIGINT', () => new App().gracefulShutdown());
 
-// Start the application
-new App().start();
+// Start the bot
+new App().start().catch(err => {
+    console.error('Fatal initialization error:', err);
+    process.exit(1);
+});
