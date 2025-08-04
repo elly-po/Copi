@@ -17,7 +17,7 @@ import {
 
 import bs58 from 'bs58';
 import crypto from 'crypto';
-import config from '../config/config.js';
+import config from '../config/index.js';
 
 class WalletManager {
   constructor() {
