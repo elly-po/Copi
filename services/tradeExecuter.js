@@ -1,7 +1,7 @@
-const database = require('../database/database');
-const jupiter = require('./jupiterService');
-const blockchain = require('../blockchain/blockchainMonitor');
-const { sleep } = require('../utils/helpers');
+const database = require('../database/database.js');
+const jupiter = require('./jupiterService.js');
+const blockchain = require('../blockchain/blockchainMonitor.js');
+const { sleep } = require('../utils/helpers.js');
 
 class TradeExecutor {
   constructor() {
