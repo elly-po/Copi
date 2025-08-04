@@ -1,6 +1,6 @@
 const axios = require('axios');
-const config = require('../config/config');
-const walletManager = require('../wallet/walletManager');
+const config = require('../config/config.js');
+const walletManager = require('../wallet/walletManager.js');
 
 class JupiterService {
   constructor() {
