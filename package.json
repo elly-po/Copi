@@ -1,0 +1,29 @@
+{
+  "name": "copiAlpha",
+  "version": "1.0.0",
+  "description": "Solana trading bot that monitors & mimics alpha wallet trades in real time",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.87.6",
+    "@solana/spl-token": "^0.3.9",
+    "grammy": "^1.21.1",
+    "ws": "^8.14.2",
+    "axios": "^1.6.2",
+    "bs58": "^5.0.0",
+    "dotenv": "^16.3.1",
+    "node-cron": "^3.0.3",
+    "fs-extra": "^11.2.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "keywords": ["solana", "trading", "bot", "telegram", "cryptocurrency"],
+  "author": "e",
+  "license": "MIT"
+}
+
+
