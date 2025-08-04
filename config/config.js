@@ -36,15 +36,59 @@ class Config {
                 rpcRateLimit: 15 // Requests per second
             }
         };
-        this.ensureConfigExists();
+
+        // Initialize synchronously
+        this.initializeSync();
     }
 
-    // ... (keep existing ensureConfigExists, get, update methods)
+    initializeSync() {
+        // Create data directory if needed
+        fs.ensureDirSync(path.dirname(this.configPath));
+        
+        // Initialize config file if it doesn't exist
+        if (!fs.existsSync(this.configPath)) {
+            fs.writeJsonSync(this.configPath, this.defaultConfig, { spaces: 2 });
+        }
+    }
+
+    async ensureConfigExists() {
+        try {
+            await fs.ensureDir(path.dirname(this.configPath));
+            if (!await fs.pathExists(this.configPath)) {
+                await fs.writeJson(this.configPath, this.defaultConfig, { spaces: 2 });
+            }
+        } catch (error) {
+            console.error('Error ensuring config exists:', error);
+            throw error;
+        }
+    }
+
+    async get() {
+        try {
+            const config = await fs.readJson(this.configPath);
+            return { ...this.defaultConfig, ...config };
+        } catch (error) {
+            console.error('Error reading config:', error);
+            return this.defaultConfig;
+        }
+    }
+
+    async update(newConfig) {
+        try {
+            const currentConfig = await this.get();
+            const updatedConfig = { ...currentConfig, ...newConfig };
+            await fs.writeJson(this.configPath, updatedConfig, { spaces: 2 });
+            return updatedConfig;
+        } catch (error) {
+            console.error('Error updating config:', error);
+            throw error;
+        }
+    }
 
     validateEnvironment() {
         const required = [
             'TELEGRAM_BOT_TOKEN',
-            'ENCRYPTION_KEY' // Now required
+            'ENCRYPTION_KEY'
         ];
 
         const missing = required.filter(env => !process.env[env]);
@@ -54,4 +98,6 @@ class Config {
     }
 }
 
-module.exports = new Config();
+// Export initialized instance
+const configInstance = new Config();
+module.exports = configInstance;
