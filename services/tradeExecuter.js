@@ -1,7 +1,8 @@
-const database = require('../database/database.js');
-const jupiter = require('./jupiterService.js');
-const blockchain = require('../blockchain/blockchainMonitor.js');
-const { sleep } = require('../utils/helpers.js');
+import database from '../database/database.js';
+import jupiter from './jupiterService.js';
+import blockchain from '../blockchain/blockchainMonitor.js';
+import { sleep } from '../utils/helpers.js';
+import telegram from '../telegrambot/grammy.js'; // Assuming you have a default export for telegram
 
 class TradeExecutor {
   constructor() {
@@ -12,7 +13,7 @@ class TradeExecutor {
   setupListeners() {
     blockchain.on('swap-detected', async (swap) => {
       const users = await database.getAllUsers();
-      
+
       users.forEach(async (user) => {
         if (this.shouldExecuteTrade(user, swap)) {
           this.executeMimicTrade(user, swap);
@@ -22,21 +23,20 @@ class TradeExecutor {
   }
 
   shouldExecuteTrade(user, swap) {
-    // Check if wallet is tracked by user
-    const isTracked = user.alphaWallets.some(w => 
+    const isTracked = user.alphaWallets.some(w =>
       database.getAlphaWallet(w)?.address === swap.wallet
     );
-    
-    // Check trade filters
-    return isTracked && 
+
+    return (
+      isTracked &&
       user.settings.autoMimic &&
       (swap.isBuy ? !user.settings.sellOnly : !user.settings.buyOnly) &&
-      this.activeTrades.get(`${user.id}-${swap.token}`) < user.settings.maxTradesPerToken;
+      (this.activeTrades.get(`${user.id}-${swap.token}`) || 0) < user.settings.maxTradesPerToken
+    );
   }
 
   async executeMimicTrade(user, swap) {
     try {
-      // Apply delay if configured
       if (user.settings.delay > 0) {
         await sleep(user.settings.delay);
       }
@@ -52,7 +52,6 @@ class TradeExecutor {
         slippage: user.settings.slippage
       });
 
-      // Update counters
       this.activeTrades.set(
         `${user.id}-${swap.token}`,
         (this.activeTrades.get(`${user.id}-${swap.token}`) || 0) + 1
@@ -67,8 +66,7 @@ class TradeExecutor {
         direction: swap.isBuy ? 'buy' : 'sell'
       });
 
-      // Notify user
-      telegram.bot.api.sendMessage(
+      await telegram.bot.api.sendMessage(
         user.id,
         `🔄 Mimicked trade:\n\n` +
         `Token: ${swap.token}\n` +
@@ -78,9 +76,10 @@ class TradeExecutor {
       );
     } catch (error) {
       console.error(`Trade failed for user ${user.id}:`, error);
-      // Send error notification
+      // Optional: add error notification logic
     }
   }
 }
 
-module.exports = new TradeExecutor();
+const tradeExecutor = new TradeExecutor();
+export default tradeExecutor;
