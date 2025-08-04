@@ -1,8 +1,10 @@
-const { Bot, Keyboard, InlineKeyboard, session } = require('grammy');
-const config = require('../config/config.js');
-const database = require('../database/database.js');
-const walletManager = require('../wallet/walletManager.js');
-const { encryptPrivateKey } = require('../security/auth.js');
+// grammy.js
+
+import { Bot, Keyboard, InlineKeyboard, session } from 'grammy';
+import config from '../config/config.js';
+import database from '../database/database.js';
+import walletManager from '../wallet/walletManager.js';
+import { encryptPrivateKey } from '../security/auth.js';
 
 class TelegramBot {
   constructor() {
@@ -19,7 +21,6 @@ class TelegramBot {
   }
 
   setupMiddlewares() {
-    // Rate limiting
     this.bot.api.config.use(async (prev, method, payload) => {
       const canProceed = await database.checkRateLimit(payload.chat_id, 'telegram_command');
       if (!canProceed) {
@@ -28,7 +29,6 @@ class TelegramBot {
       return prev(method, payload);
     });
 
-    // Session management
     this.bot.use(session({
       initial: () => ({
         step: 'idle',
@@ -38,7 +38,6 @@ class TelegramBot {
   }
 
   setupCommands() {
-    // Start command
     this.bot.command('start', async (ctx) => {
       try {
         const userId = ctx.from.id;
@@ -66,7 +65,6 @@ class TelegramBot {
       }
     });
 
-    // Connect wallet
     this.bot.command('connect', async (ctx) => {
       try {
         ctx.session.step = 'awaiting_wallet';
@@ -84,7 +82,6 @@ class TelegramBot {
       }
     });
 
-    // Add alpha wallet
     this.bot.command('addwallet', async (ctx) => {
       try {
         ctx.session.step = 'awaiting_alpha_wallet';
@@ -101,7 +98,6 @@ class TelegramBot {
       }
     });
 
-    // Settings command
     this.bot.command('settings', async (ctx) => {
       try {
         const user = await database.getUser(ctx.from.id);
@@ -124,13 +120,12 @@ class TelegramBot {
   }
 
   setupCallbacks() {
-    // Wallet connection handler
     this.bot.on('message:text', async (ctx) => {
       try {
         if (ctx.session.step === 'awaiting_wallet') {
           const { publicKey, keypair } = walletManager.importWallet(ctx.message.text);
           const encryptedKey = encryptPrivateKey(
-            ctx.message.text, 
+            ctx.message.text,
             config.getSync().security.encryptionKey
           );
 
@@ -154,7 +149,7 @@ class TelegramBot {
             await database.addAlphaWallet(ctx.from.id, ctx.message.text);
             ctx.session.step = 'idle';
             await ctx.reply(
-              `✅ Now tracking wallet: \`${ctx.message.text}\``, 
+              `✅ Now tracking wallet: \`${ctx.message.text}\``,
               { parse_mode: 'Markdown' }
             );
           } else {
@@ -168,7 +163,6 @@ class TelegramBot {
       }
     });
 
-    // Settings callbacks
     this.bot.callbackQuery(/set_/, async (ctx) => {
       try {
         const action = ctx.callbackQuery.data;
@@ -185,7 +179,6 @@ class TelegramBot {
       }
     });
 
-    // Cancel action
     this.bot.callbackQuery('cancel_setting', async (ctx) => {
       try {
         ctx.session.step = 'idle';
@@ -200,12 +193,11 @@ class TelegramBot {
   setupErrorHandling() {
     this.bot.catch(async (err) => {
       console.error('Global bot error:', err);
-      // Notify admin via Telegram if needed
       const adminIds = config.getSync().telegram.adminChatIds?.split(',') || [];
       for (const chatId of adminIds) {
         try {
           await this.bot.api.sendMessage(
-            chatId, 
+            chatId,
             `⚠️ Bot error:\n${err.message || 'Unknown error'}`
           );
         } catch (adminError) {
@@ -214,7 +206,6 @@ class TelegramBot {
       }
     });
 
-    // Global error response
     this.bot.on('::error', async (err) => {
       console.error('Unhandled error:', err);
       try {
@@ -236,8 +227,7 @@ class TelegramBot {
   }
 }
 
-// Export promise that resolves to initialized bot
-module.exports = (async () => {
+export default async function createTelegramBot() {
   try {
     config.validateSync();
     return new TelegramBot();
@@ -245,4 +235,4 @@ module.exports = (async () => {
     console.error('Failed to initialize Telegram bot:', error);
     process.exit(1);
   }
-})();
+}
