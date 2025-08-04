@@ -239,7 +239,7 @@ class TelegramBot {
 // Export promise that resolves to initialized bot
 module.exports = (async () => {
   try {
-    await config.validate();
+    config.validateSync();
     return new TelegramBot();
   } catch (error) {
     console.error('Failed to initialize Telegram bot:', error);
