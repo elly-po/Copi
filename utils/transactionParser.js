@@ -1,5 +1,5 @@
 const { Connection } = require('@solana/web3.js');
-const config = require('../config/config');
+const config = require('../config/config.js');
 
 const JUPITER_PROGRAM_ID = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4';
 
