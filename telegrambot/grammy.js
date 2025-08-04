@@ -1,7 +1,7 @@
 // grammy.js
 
 import { Bot, Keyboard, InlineKeyboard, session } from 'grammy';
-import config from '../config/config.js';
+import config from '../config/index.js';
 import database from '../database/database.js';
 import walletManager from '../wallet/walletManager.js';
 import { encryptPrivateKey } from '../security/auth.js';
