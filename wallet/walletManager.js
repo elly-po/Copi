@@ -13,7 +13,7 @@ const {
 } = require('@solana/spl-token');
 const bs58 = require('bs58');
 const crypto = require('crypto');
-const config = require('../config/config');
+const config = require('./config/config');
 
 class WalletManager {
     constructor() {
