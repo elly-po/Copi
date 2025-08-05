@@ -6,10 +6,12 @@ const EventEmitter = require('events');
 class TradingEngine extends EventEmitter {
   constructor() {
     super();
+    console.log('[Init] Creating new TradingEngine instance');
     this.connection = new Connection(
       `${process.env.HELIUS_RPC_URL}${process.env.HELIUS_API_KEY}`,
       'confirmed'
     );
+    console.log('[Init] Solana connection established');
     this.db = Database;
     this.activeUsers = new Map();
     this.tradeQueue = [];
@@ -17,130 +19,154 @@ class TradingEngine extends EventEmitter {
   }
 
   async initialize() {
-    console.log('Trading engine initialized');
+    console.log('[Init] Trading engine initialization started');
     this.processTradeQueue();
+    console.log('[Init] Trading engine initialization completed');
   }
 
   async addUser(telegramId, walletAddress) {
+    console.log(`[User] Adding user ${telegramId} with wallet ${walletAddress}`);
     try {
       const settings = await this.db.getUserSettings(telegramId);
-      
+      console.log(`[User] Retrieved settings for ${telegramId}:`, settings);
+
       this.activeUsers.set(telegramId, {
         walletAddress,
         settings,
         lastTradeTime: 0,
         tradesThisHour: 0,
-        hourlyReset: Date.now() + 3600000 // Reset every hour
+        hourlyReset: Date.now() + 3600000
       });
-      
-      console.log(`Added user ${telegramId} to trading engine`);
+
+      console.log(`[User] User ${telegramId} added to activeUsers`);
       return true;
     } catch (error) {
-      console.error('Error adding user to trading engine:', error.message);
+      console.error(`[User] Error adding user ${telegramId}:`, error.message);
       return false;
     }
   }
 
   async removeUser(telegramId) {
+    console.log(`[User] Removing user ${telegramId}`);
     this.activeUsers.delete(telegramId);
-    console.log(`Removed user ${telegramId} from trading engine`);
+    console.log(`[User] User ${telegramId} removed`);
   }
 
   async handleTradeSignal(tradeSignal) {
-    if (!this.activeUsers.size) return;
+    console.log('[Signal] Handling trade signal:', tradeSignal);
 
-    console.log('Processing trade signal for', this.activeUsers.size, 'users');
-    
-    // Add to queue for each active user
+    if (!this.activeUsers.size) {
+      console.log('[Signal] No active users to process');
+      return;
+    }
+
+    console.log('[Signal] Active users count:', this.activeUsers.size);
+
     for (const [telegramId, userData] of this.activeUsers) {
-      if (!userData.settings.auto_trading) continue;
-      
-      // Check rate limits
-      if (!this.canUserTrade(telegramId, userData)) continue;
-      
+      console.log(`[Signal] Evaluating user ${telegramId}`);
+
+      if (!userData.settings.auto_trading) {
+        console.log(`[Signal] User ${telegramId} has auto trading disabled`);
+        continue;
+      }
+
+      if (!this.canUserTrade(telegramId, userData)) {
+        console.log(`[Signal] User ${telegramId} is not eligible to trade`);
+        continue;
+      }
+
       this.tradeQueue.push({
         telegramId,
         userData,
         tradeSignal,
         timestamp: Date.now()
       });
+
+      console.log(`[Signal] Trade signal added to queue for user ${telegramId}`);
     }
+
+    console.log('[Signal] Trade queue length:', this.tradeQueue.length);
   }
 
   canUserTrade(telegramId, userData) {
     const now = Date.now();
-    
-    // Reset hourly counter
+    console.log(`[RateLimit] Checking if user ${telegramId} can trade`);
+
     if (now > userData.hourlyReset) {
+      console.log(`[RateLimit] Resetting hourly counter for user ${telegramId}`);
       userData.tradesThisHour = 0;
       userData.hourlyReset = now + 3600000;
     }
-    
-    // Check hourly limit
+
     if (userData.tradesThisHour >= userData.settings.max_trades_per_hour) {
-      console.log(`User ${telegramId} hit hourly trade limit`);
+      console.log(`[RateLimit] User ${telegramId} reached max trades per hour`);
       return false;
     }
-    
-    // Check minimum time between trades (30 seconds)
+
     if (now - userData.lastTradeTime < 30000) {
-      console.log(`User ${telegramId} trading too frequently`);
+      console.log(`[RateLimit] User ${telegramId} is trading too frequently`);
       return false;
     }
-    
+
+    console.log(`[RateLimit] User ${telegramId} is eligible to trade`);
     return true;
   }
 
   async processTradeQueue() {
+    console.log('[Queue] Starting trade queue processing');
+
     if (this.processing || this.tradeQueue.length === 0) {
+      console.log(`[Queue] Skipping processing — active: ${this.processing}, queue length: ${this.tradeQueue.length}`);
       setTimeout(() => this.processTradeQueue(), 1000);
       return;
     }
-    
+
     this.processing = true;
-    
+    console.log('[Queue] Processing a trade');
+
     try {
       const trade = this.tradeQueue.shift();
+      console.log('[Queue] Trade popped:', trade);
+
       if (trade) {
         await this.executeTrade(trade);
       }
     } catch (error) {
-      console.error('Error processing trade queue:', error.message);
+      console.error('[Queue] Error while executing trade:', error.message);
     }
-    
+
     this.processing = false;
-    setTimeout(() => this.processTradeQueue(), 2000); // 2 second delay between trades
+    console.log('[Queue] Trade processing completed');
+    setTimeout(() => this.processTradeQueue(), 2000);
   }
 
   async executeTrade(trade) {
     const { telegramId, userData, tradeSignal } = trade;
-    
+    console.log(`[Exec] Executing trade for ${telegramId} with signal:`, tradeSignal);
+
     try {
-      console.log(`Executing trade for user ${telegramId}:`, tradeSignal.tokenSymbol);
-      
-      // Calculate trade amount
       const tradeAmount = Math.min(
         userData.settings.max_trade_amount,
-        tradeSignal.amountIn * 0.1 // 10% of alpha trader's amount
+        tradeSignal.amountIn * 0.1
       );
-      
-      // Get Jupiter quote
+      console.log(`[Exec] Trade amount calculated: ${tradeAmount}`);
+
       const quote = await this.getJupiterQuote(
-        'So11111111111111111111111111111111111111112', // SOL
+        'So11111111111111111111111111111111111111112',
         tradeSignal.tokenAddress,
-        tradeAmount * 1e9 // Convert to lamports
+        tradeAmount * 1e9
       );
-      
+      console.log('[Exec] Jupiter quote received:', quote);
+
       if (!quote) {
-        console.log('Could not get quote for trade');
+        console.log('[Exec] Quote retrieval failed');
         return;
       }
-      
-      // Simulate the trade (for safety in demo)
+
       const simulatedTx = await this.simulateTrade(quote, userData.walletAddress);
-      
+      console.log('[Exec] Simulated transaction:', simulatedTx);
+
       if (simulatedTx.success) {
-        // Save trade record
         const tradeRecord = {
           telegramId,
           alphaWallet: tradeSignal.alphaWallet,
@@ -151,28 +177,27 @@ class TradingEngine extends EventEmitter {
           signature: simulatedTx.signature,
           status: 'completed'
         };
-        
+
         await this.db.saveTrade(tradeRecord);
-        
-        // Update user stats
+        console.log('[Exec] Trade record saved:', tradeRecord);
+
         userData.lastTradeTime = Date.now();
         userData.tradesThisHour++;
-        
-        // Emit trade completion event
+
         this.emit('tradeCompleted', {
           telegramId,
           tradeRecord,
           tokenSymbol: tradeSignal.tokenSymbol,
           tokenName: tradeSignal.tokenName
         });
-        
-        console.log(`✅ Trade completed for user ${telegramId}`);
+
+        console.log(`[✅] Trade completed for user ${telegramId}`);
+      } else {
+        console.log('[Exec] Simulated trade failed');
       }
-      
+
     } catch (error) {
-      console.error(`Error executing trade for user ${telegramId}:`, error.message);
-      
-      // Emit trade error event
+      console.error(`[Exec] Error for user ${telegramId}:`, error.message);
       this.emit('tradeError', {
         telegramId,
         error: error.message,
@@ -182,40 +207,41 @@ class TradingEngine extends EventEmitter {
   }
 
   async getJupiterQuote(inputMint, outputMint, amount) {
+    console.log('[Quote] Fetching quote for:', { inputMint, outputMint, amount });
+
     try {
       const response = await axios.get('https://quote-api.jup.ag/v6/quote', {
         params: {
           inputMint,
           outputMint,
           amount,
-          slippageBps: 500 // 5% slippage
+          slippageBps: 500
         }
       });
-      
+      console.log('[Quote] Quote received:', response.data);
       return response.data;
     } catch (error) {
-      console.error('Error getting Jupiter quote:', error.message);
+      console.error('[Quote] Error fetching quote:', error.message);
       return null;
     }
   }
 
   async simulateTrade(quote, walletAddress) {
-    // This is a simulation for demo purposes
-    // In production, you would execute the actual trade
-    
+    console.log('[Sim] Starting trade simulation with quote:', quote);
+    console.log('[Sim] Wallet address:', walletAddress);
+
     try {
-      // Simulate processing time
       await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
-      
-      // Simulate success/failure (90% success rate)
       const success = Math.random() > 0.1;
-      
-      return {
+      const result = {
         success,
         signature: success ? this.generateMockSignature() : null,
         error: success ? null : 'Simulation failed'
       };
+      console.log('[Sim] Simulation result:', result);
+      return result;
     } catch (error) {
+      console.error('[Sim] Simulation error:', error.message);
       return {
         success: false,
         signature: null,
@@ -225,29 +251,37 @@ class TradingEngine extends EventEmitter {
   }
 
   generateMockSignature() {
-    // Generate a realistic looking Solana transaction signature
+    console.log('[Mock] Generating mock signature');
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     let signature = '';
     for (let i = 0; i < 88; i++) {
       signature += chars.charAt(Math.floor(Math.random() * chars.length));
     }
+    console.log('[Mock] Signature:', signature);
     return signature;
   }
 
   async updateUserSettings(telegramId) {
+    console.log(`[User] Updating settings for ${telegramId}`);
     if (this.activeUsers.has(telegramId)) {
       const settings = await this.db.getUserSettings(telegramId);
       const userData = this.activeUsers.get(telegramId);
       userData.settings = settings;
-      console.log(`Updated settings for user ${telegramId}`);
+      console.log(`[User] Settings updated for ${telegramId}:`, settings);
+    } else {
+      console.log(`[User] Cannot update settings — user ${telegramId} not found`);
     }
   }
 
   getActiveUsers() {
-    return Array.from(this.activeUsers.keys());
+    console.log('[Stats] Getting active user list');
+    const users = Array.from(this.activeUsers.keys());
+    console.log('[Stats] Active users:', users);
+    return users;
   }
 
   getUserStats(telegramId) {
+    console.log(`[Stats] Getting stats for user ${telegramId}`);
     const userData = this.activeUsers.get(telegramId);
     if (!userData) return null;
     
