@@ -287,9 +287,4 @@ class CopyTradingBot {
   }
 }
 
-// Start the bot
-const bot = new CopyTradingBot();
-process.once('SIGINT', () => bot.bot.stop());
-process.once('SIGTERM', () => bot.bot.stop());
-
-module.exports = bot;
+module.exports = CopyTradingBot();
