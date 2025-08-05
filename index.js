@@ -8,7 +8,7 @@ class CopyTradingSystem {
   constructor() {
     this.walletTracker = new WalletTracker();
     this.tradingEngine = new TradingEngine();
-    this.telegramBot = new CopyTradingBot();
+    this.telegramBot = CopyTradingBot;
     this.isRunning = false;
   }
 
