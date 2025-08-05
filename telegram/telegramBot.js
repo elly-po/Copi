@@ -33,9 +33,9 @@ class TelegramBot {
             this.bot.use(conversations());
 
             // Register conversations
-            this.bot.use(createConversation(this.walletSetupConversation.bind(this)));
-            this.bot.use(createConversation(this.alphaWalletConversation.bind(this)));
-            this.bot.use(createConversation(this.settingsConversation.bind(this)));
+            this.bot.use(createConversation(this.walletSetupConversation.bind(this), 'walletSetup'));
+            this.bot.use(createConversation(this.alphaWalletConversation.bind(this), 'alphaWallet'));
+            this.bot.use(createConversation(this.settingsConversation.bind(this), 'settings'));
 
             // Register command handlers
             this.registerCommands();
