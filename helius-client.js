@@ -3,7 +3,7 @@ const axios = require('axios');
 class HeliusClient {
   constructor() {
     this.apiKey = process.env.HELIUS_API_KEY;
-    this.baseURL = 'https://api.helius.xyz/v0';
+    this.baseURL = 'https://api.helius.xyz/v1';
     this.rpcURL = `${process.env.HELIUS_RPC_URL}${this.apiKey}`;
     this.lastRequestTime = 0;
     this.rateLimitDelay = parseInt(process.env.RATE_LIMIT_DELAY) || 1000;
@@ -23,33 +23,38 @@ class HeliusClient {
     this.lastRequestTime = Date.now();
   }
 
+  /**
+   * ✅ NEW: Uses v1/transactions endpoint to fetch filtered SWAP transactions
+   */
   async getTransactions(address, beforeSignature = null, limit = 10) {
-    console.log(`📡 [getTransactions] Fetching filtered txs for ${address} | before: ${beforeSignature} | limit: ${limit}`);
+    console.log(`📡 [getTransactions] Fetching SWAP txs for ${address} | before: ${beforeSignature} | limit: ${limit}`);
     await this.waitForRateLimit();
-    
+
     try {
       const body = {
-        address,
+        accounts: [address],
+        transactionTypes: ['SWAP'],
         limit,
-        before: beforeSignature,
-        commitment: 'confirmed',
-        transactionTypes: ["SWAP"],// Filter only for swap transactions
       };
-      
+
+      if (beforeSignature) {
+        body.before = beforeSignature;
+      }
+
       const response = await axios.post(
-        `${this.baseURL}/addresses/${address}/transactions?api-key=${this.apiKey}`, // API key as URL param
-        body, // All filters in POST body
+        `${this.baseURL}/transactions?api-key=${this.apiKey}`,
+        body,
         {
           headers: {
             'Content-Type': 'application/json',
           },
         }
       );
-      
-      console.log(`✅ [getTransactions] Retrieved ${response.data.length} filtered txs for ${address}`);
+
+      console.log(`✅ [getTransactions] Retrieved ${response.data.length} swap txs for ${address}`);
       return response.data;
     } catch (error) {
-      console.error(`❌ [getTransactions] Failed to fetch filtered txs for ${address}:`, error.message);
+      console.error(`❌ [getTransactions] Failed for ${address}:`, error.response?.data || error.message);
       return [];
     }
   }
