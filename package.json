@@ -20,8 +20,11 @@
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
+    "typescript": "^5.4.5",
+    "fastestsmallesttextencoderdecoder": "^1.0.22",
+    "node-fetch": "^2.6.7"
   },
   "keywords": ["solana", "trading", "bot", "telegram", "cryptocurrency"],
-  "author": "Your Name",
+  "author": "elly po",
   "license": "MIT"
 }
