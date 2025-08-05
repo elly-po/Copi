@@ -24,28 +24,32 @@ class HeliusClient {
   }
 
   async getTransactions(address, beforeSignature = null, limit = 10) {
-    console.log(`📡 [getTransactions] Fetching txs for ${address} | before: ${beforeSignature} | limit: ${limit}`);
+    console.log(`📡 [getTransactions] Fetching filtered txs for ${address} | before: ${beforeSignature} | limit: ${limit}`);
     await this.waitForRateLimit();
     
     try {
       const body = {
+        address,
         limit,
-        type: "SWAP", // Filter only for swap transactions
+        before: beforeSignature,
+        commitment: 'confirmed',
+        transactionTypes: ["SWAP"],// Filter only for swap transactions
       };
-      
-      if (beforeSignature) {
-        body.before = beforeSignature;
-      }
       
       const response = await axios.post(
         `${this.baseURL}/addresses/${address}/transactions?api-key=${this.apiKey}`, // API key as URL param
-        body // All filters in POST body
+        body, // All filters in POST body
+        {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }
       );
       
-      console.log(`✅ [getTransactions] Retrieved ${response.data.length} txs for ${address}`);
+      console.log(`✅ [getTransactions] Retrieved ${response.data.length} filtered txs for ${address}`);
       return response.data;
     } catch (error) {
-      console.error(`❌ [getTransactions] Failed to fetch txs for ${address}:`, error.message);
+      console.error(`❌ [getTransactions] Failed to fetch filtered txs for ${address}:`, error.message);
       return [];
     }
   }
