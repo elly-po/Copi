@@ -237,4 +237,27 @@ class TradingEngine extends EventEmitter {
   async updateUserSettings(telegramId) {
     if (this.activeUsers.has(telegramId)) {
       const settings = await this.db.getUserSettings(telegramId);
-      const userData = this.activeUsers.get(tele
+      const userData = this.activeUsers.get(telegramId);
+      userData.settings = settings;
+      console.log(`Updated settings for user ${telegramId}`);
+    }
+  }
+
+  getActiveUsers() {
+    return Array.from(this.activeUsers.keys());
+  }
+
+  getUserStats(telegramId) {
+    const userData = this.activeUsers.get(telegramId);
+    if (!userData) return null;
+    
+    return {
+      tradesThisHour: userData.tradesThisHour,
+      maxTradesPerHour: userData.settings.max_trades_per_hour,
+      lastTradeTime: userData.lastTradeTime,
+      autoTrading: userData.settings.auto_trading
+    };
+  }
+}
+
+module.exports = TradingEngine;
