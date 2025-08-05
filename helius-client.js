@@ -7,30 +7,33 @@ class HeliusClient {
     this.rpcURL = `${process.env.HELIUS_RPC_URL}${this.apiKey}`;
     this.lastRequestTime = 0;
     this.rateLimitDelay = parseInt(process.env.RATE_LIMIT_DELAY) || 1000;
+    console.log('🧠 [HeliusClient] Initialized with baseURL:', this.baseURL);
   }
 
   async waitForRateLimit() {
     const now = Date.now();
     const timeSinceLastRequest = now - this.lastRequestTime;
-    
+
     if (timeSinceLastRequest < this.rateLimitDelay) {
       const waitTime = this.rateLimitDelay - timeSinceLastRequest;
+      console.log(`⏳ [RateLimit] Waiting ${waitTime}ms to respect rate limit`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
     }
-    
+
     this.lastRequestTime = Date.now();
   }
 
   async getTransactions(address, beforeSignature = null, limit = 10) {
+    console.log(`📡 [getTransactions] Fetching txs for ${address} | before: ${beforeSignature} | limit: ${limit}`);
     await this.waitForRateLimit();
-    
+
     try {
       const params = {
         address,
         limit,
         commitment: 'confirmed'
       };
-      
+
       if (beforeSignature) {
         params.before = beforeSignature;
       }
@@ -42,16 +45,18 @@ class HeliusClient {
         }
       });
 
+      console.log(`✅ [getTransactions] Retrieved ${response.data.length} txs for ${address}`);
       return response.data;
     } catch (error) {
-      console.error('Error fetching transactions:', error.message);
+      console.error(`❌ [getTransactions] Error for ${address}:`, error.message);
       throw error;
     }
   }
 
   async getTokenAccounts(address) {
+    console.log(`📡 [getTokenAccounts] Fetching token accounts for ${address}`);
     await this.waitForRateLimit();
-    
+
     try {
       const response = await axios.post(this.rpcURL, {
         jsonrpc: '2.0',
@@ -64,16 +69,19 @@ class HeliusClient {
         ]
       });
 
-      return response.data.result?.value || [];
+      const accounts = response.data.result?.value || [];
+      console.log(`✅ [getTokenAccounts] Found ${accounts.length} token accounts for ${address}`);
+      return accounts;
     } catch (error) {
-      console.error('Error fetching token accounts:', error.message);
+      console.error('❌ [getTokenAccounts] Error:', error.message);
       throw error;
     }
   }
 
   async getTokenMetadata(tokenAddress) {
+    console.log(`📡 [getTokenMetadata] Fetching metadata for token: ${tokenAddress}`);
     await this.waitForRateLimit();
-    
+
     try {
       const response = await axios.get(`${this.baseURL}/tokens/metadata`, {
         params: {
@@ -82,29 +90,43 @@ class HeliusClient {
         }
       });
 
-      return response.data[0] || null;
+      const metadata = response.data[0] || null;
+      if (metadata) {
+        console.log(`✅ [getTokenMetadata] Found metadata for ${tokenAddress}: Symbol=${metadata.symbol}`);
+      } else {
+        console.log(`⚠️ [getTokenMetadata] No metadata found for ${tokenAddress}`);
+      }
+      return metadata;
     } catch (error) {
-      console.error('Error fetching token metadata:', error.message);
+      console.error('❌ [getTokenMetadata] Error:', error.message);
       return null;
     }
   }
 
   async getTokenPrice(tokenAddress) {
+    console.log(`📡 [getTokenPrice] Fetching price for ${tokenAddress}`);
     await this.waitForRateLimit();
-    
+
     try {
-      // Using Jupiter API for price data (free tier)
       const response = await axios.get(`https://price.jup.ag/v4/price?ids=${tokenAddress}`);
-      return response.data.data[tokenAddress] || null;
+      const priceData = response.data.data[tokenAddress] || null;
+
+      if (priceData) {
+        console.log(`💰 [getTokenPrice] Price found: $${priceData.price}`);
+      } else {
+        console.log(`⚠️ [getTokenPrice] No price data for ${tokenAddress}`);
+      }
+
+      return priceData;
     } catch (error) {
-      console.error('Error fetching token price:', error.message);
+      console.error('❌ [getTokenPrice] Error:', error.message);
       return null;
     }
   }
 
   parseSwapTransaction(transaction) {
+    console.log(`🔍 [parseSwapTransaction] Parsing txn: ${transaction.signature}`);
     try {
-      // Look for token transfers and swaps in the transaction
       const swapData = {
         signature: transaction.signature,
         tokenIn: null,
@@ -114,31 +136,37 @@ class HeliusClient {
         timestamp: transaction.timestamp
       };
 
-      // Parse instruction logs for swap information
       const instructions = transaction.instructions || [];
-      
+      console.log(`ℹ️ [parseSwapTransaction] Instructions count: ${instructions.length}`);
+
       for (const instruction of instructions) {
-        if (instruction.programId === 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4' || // Jupiter
-            instruction.programId === '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM' || // Raydium
-            instruction.programId === 'EhpHV7B2r4F4zHF2qNpANKKLNEtCT6Z6LNHNz8Xr8kLJ') { // Orca
-          
-          // Extract swap details from instruction data
+        const program = instruction.programId;
+
+        if (
+          program === 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4' || // Jupiter
+          program === '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM' || // Raydium
+          program === 'EhpHV7B2r4F4zHF2qNpANKKLNEtCT6Z6LNHNz8Xr8kLJ'    // Orca
+        ) {
           const accounts = instruction.accounts || [];
+          console.log(`🔁 [parseSwapTransaction] Swap detected. Accounts length: ${accounts.length}`);
+
           if (accounts.length >= 4) {
             swapData.tokenIn = accounts[2];
             swapData.tokenOut = accounts[3];
+            console.log(`✅ [parseSwapTransaction] tokenIn=${accounts[2]}, tokenOut=${accounts[3]}`);
           }
         }
       }
 
       return swapData;
     } catch (error) {
-      console.error('Error parsing swap transaction:', error.message);
+      console.error(`❌ [parseSwapTransaction] Error:`, error.message);
       return null;
     }
   }
 
   async getRecentSwaps(walletAddress, limit = 5) {
+    console.log(`📡 [getRecentSwaps] Getting recent swaps for ${walletAddress}`);
     try {
       const transactions = await this.getTransactions(walletAddress, null, limit);
       const swaps = [];
@@ -147,12 +175,14 @@ class HeliusClient {
         const swapData = this.parseSwapTransaction(tx);
         if (swapData && swapData.tokenIn && swapData.tokenOut) {
           swaps.push(swapData);
+          console.log(`🔄 [getRecentSwaps] Swap detected: ${swapData.signature}`);
         }
       }
 
+      console.log(`✅ [getRecentSwaps] Found ${swaps.length} swap(s) for ${walletAddress}`);
       return swaps;
     } catch (error) {
-      console.error('Error getting recent swaps:', error.message);
+      console.error('❌ [getRecentSwaps] Error:', error.message);
       return [];
     }
   }
