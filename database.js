@@ -1,15 +1,16 @@
-const sqlite3 = require('sqlite3').verbose();
+const DatabaseLib = require('better-sqlite3');
 const path = require('path');
 
 class Database {
   constructor() {
-    this.db = new sqlite3.Database(process.env.DATABASE_PATH || './trading_bot.db');
+    const dbPath = process.env.DATABASE_PATH || './trading_bot.db';
+    this.db = new DatabaseLib(dbPath);
     this.initTables();
   }
 
   initTables() {
     // Users table
-    this.db.run(`
+    this.db.prepare(`
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY,
         telegram_id TEXT UNIQUE,
@@ -17,10 +18,10 @@ class Database {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         is_active BOOLEAN DEFAULT 1
       )
-    `);
+    `).run();
 
     // User settings table
-    this.db.run(`
+    this.db.prepare(`
       CREATE TABLE IF NOT EXISTS user_settings (
         id INTEGER PRIMARY KEY,
         telegram_id TEXT UNIQUE,
@@ -32,10 +33,10 @@ class Database {
         max_trades_per_hour INTEGER DEFAULT 10,
         FOREIGN KEY (telegram_id) REFERENCES users (telegram_id)
       )
-    `);
+    `).run();
 
     // Tracked wallets table
-    this.db.run(`
+    this.db.prepare(`
       CREATE TABLE IF NOT EXISTS tracked_wallets (
         id INTEGER PRIMARY KEY,
         wallet_address TEXT UNIQUE,
@@ -45,10 +46,10 @@ class Database {
         total_trades INTEGER DEFAULT 0,
         added_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
-    `);
+    `).run();
 
     // Trades table
-    this.db.run(`
+    this.db.prepare(`
       CREATE TABLE IF NOT EXISTS trades (
         id INTEGER PRIMARY KEY,
         telegram_id TEXT,
@@ -63,66 +64,47 @@ class Database {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (telegram_id) REFERENCES users (telegram_id)
       )
-    `);
+    `).run();
   }
 
   // User methods
-  async createUser(telegramId, walletAddress = null) {
-    return new Promise((resolve, reject) => {
-      this.db.run(
-        'INSERT OR REPLACE INTO users (telegram_id, wallet_address) VALUES (?, ?)',
-        [telegramId, walletAddress],
-        function(err) {
-          if (err) reject(err);
-          else resolve(this.lastID);
-        }
-      );
-    });
+  createUser(telegramId, walletAddress = null) {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO users (telegram_id, wallet_address)
+      VALUES (?, ?)
+    `);
+    const info = stmt.run(telegramId, walletAddress);
+    return info.lastInsertRowid;
   }
 
-  async getUser(telegramId) {
-    return new Promise((resolve, reject) => {
-      this.db.get(
-        'SELECT * FROM users WHERE telegram_id = ?',
-        [telegramId],
-        (err, row) => {
-          if (err) reject(err);
-          else resolve(row);
-        }
-      );
-    });
+  getUser(telegramId) {
+    const stmt = this.db.prepare(`
+      SELECT * FROM users WHERE telegram_id = ?
+    `);
+    return stmt.get(telegramId);
   }
 
   // Settings methods
-  async getUserSettings(telegramId) {
-    return new Promise((resolve, reject) => {
-      this.db.get(
-        'SELECT * FROM user_settings WHERE telegram_id = ?',
-        [telegramId],
-        (err, row) => {
-          if (err) reject(err);
-          else resolve(row || this.getDefaultSettings(telegramId));
-        }
-      );
-    });
+  getUserSettings(telegramId) {
+    const stmt = this.db.prepare(`
+      SELECT * FROM user_settings WHERE telegram_id = ?
+    `);
+    const row = stmt.get(telegramId);
+    return row || this.getDefaultSettings(telegramId);
   }
 
-  async updateUserSettings(telegramId, settings) {
-    return new Promise((resolve, reject) => {
-      const keys = Object.keys(settings);
-      const values = Object.values(settings);
-      const placeholders = keys.map(key => `${key} = ?`).join(', ');
-      
-      this.db.run(
-        `INSERT OR REPLACE INTO user_settings (telegram_id, ${keys.join(', ')}) 
-         VALUES (?, ${values.map(() => '?').join(', ')})`,
-        [telegramId, ...values],
-        function(err) {
-          if (err) reject(err);
-          else resolve(this.changes);
-        }
-      );
-    });
+  updateUserSettings(telegramId, settings) {
+    const keys = Object.keys(settings);
+    const values = Object.values(settings);
+    const columns = keys.join(', ');
+    const placeholders = keys.map(() => '?').join(', ');
+
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO user_settings (telegram_id, ${columns})
+      VALUES (?, ${placeholders})
+    `);
+    const info = stmt.run(telegramId, ...values);
+    return info.changes;
   }
 
   getDefaultSettings(telegramId) {
@@ -138,60 +120,50 @@ class Database {
   }
 
   // Tracked wallets methods
-  async addTrackedWallet(address, name) {
-    return new Promise((resolve, reject) => {
-      this.db.run(
-        'INSERT OR REPLACE INTO tracked_wallets (wallet_address, name) VALUES (?, ?)',
-        [address, name],
-        function(err) {
-          if (err) reject(err);
-          else resolve(this.lastID);
-        }
-      );
-    });
+  addTrackedWallet(address, name) {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO tracked_wallets (wallet_address, name)
+      VALUES (?, ?)
+    `);
+    const info = stmt.run(address, name);
+    return info.lastInsertRowid;
   }
 
-  async getTrackedWallets() {
-    return new Promise((resolve, reject) => {
-      this.db.all(
-        'SELECT * FROM tracked_wallets WHERE is_active = 1',
-        [],
-        (err, rows) => {
-          if (err) reject(err);
-          else resolve(rows);
-        }
-      );
-    });
+  getTrackedWallets() {
+    const stmt = this.db.prepare(`
+      SELECT * FROM tracked_wallets WHERE is_active = 1
+    `);
+    return stmt.all();
   }
 
   // Trades methods
-  async saveTrade(trade) {
-    return new Promise((resolve, reject) => {
-      this.db.run(`
-        INSERT INTO trades 
-        (telegram_id, alpha_wallet, token_address, trade_type, amount, price, signature, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [trade.telegramId, trade.alphaWallet, trade.tokenAddress, trade.tradeType, 
-         trade.amount, trade.price, trade.signature, trade.status],
-        function(err) {
-          if (err) reject(err);
-          else resolve(this.lastID);
-        }
-      );
-    });
+  saveTrade(trade) {
+    const stmt = this.db.prepare(`
+      INSERT INTO trades
+      (telegram_id, alpha_wallet, token_address, trade_type, amount, price, signature, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const info = stmt.run(
+      trade.telegramId,
+      trade.alphaWallet,
+      trade.tokenAddress,
+      trade.tradeType,
+      trade.amount,
+      trade.price,
+      trade.signature,
+      trade.status
+    );
+    return info.lastInsertRowid;
   }
 
-  async getUserTrades(telegramId, limit = 20) {
-    return new Promise((resolve, reject) => {
-      this.db.all(
-        'SELECT * FROM trades WHERE telegram_id = ? ORDER BY created_at DESC LIMIT ?',
-        [telegramId, limit],
-        (err, rows) => {
-          if (err) reject(err);
-          else resolve(rows);
-        }
-      );
-    });
+  getUserTrades(telegramId, limit = 20) {
+    const stmt = this.db.prepare(`
+      SELECT * FROM trades
+      WHERE telegram_id = ?
+      ORDER BY created_at DESC
+      LIMIT ?
+    `);
+    return stmt.all(telegramId, limit);
   }
 
   close() {
