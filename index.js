@@ -71,16 +71,20 @@ class CopyTradingSystem {
       // Add some well-known alpha wallets (these are examples - replace with real ones)
       const defaultWallets = [
         {
-          address: '7xJDgPgUtMLLrFp7E7JHgQpcK4DJDdqhJsnEgUZjbvG9',
-          name: 'Alpha Trader 1'
+          address: 'suqh5sHtr8HyJ7q8scBimULPkPpA557prMG47xCHQfK',
+          name: 'Cupsey'
         },
         {
-          address: '8nVnbEy3Zf8GpK9gLxC3sQGPKtNzVNzN3vkrLZfJpqxy',
-          name: 'Memecoin Master'
+          address: 'DfMxre4cKmvogbLrPigxmibVTTQDuzjdXojWzjCXXhzj',
+          name: 'Euris'
         },
         {
-          address: '9gCPMy6fPMVeqN4vQJtXyF2sKnvQpWxvLFe8dBgHs3Nt',
-          name: 'Sol Sniper'
+          address: 'DNfuF1L62WWyW3pNakVkyGGFzVVhj4Yr52jSmdTyeBHm',
+          name: 'Gake'
+        },
+        {
+          address: '71CPXu3TvH3iUKaY1bNkAAow24k6tjH473SsKprQBABC',
+          name: 'CHN'
         }
       ];
 
