@@ -2,8 +2,8 @@ class Config {
     constructor() {
         this.defaultConfig = {
             solana: {
-                rpcUrl: process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
-                wsUrl: process.env.HELIUS_WS_URL || 'wss://atlas-mainnet.helius-rpc.com',
+                rpcUrl: 'https://api.mainnet-beta.solana.com', // or a private Helius HTTPS URL if needed
+                wsUrl: `wss://rpc.helius.xyz/v1/${process.env.HELIUS_API_KEY}`,
                 commitment: 'finalized'
             },
             jupiter: {
