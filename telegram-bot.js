@@ -11,7 +11,13 @@ class CopyTradingBot {
 
   setupHandlers() {
     // Main command handler
-    this.bot.command('start', (ctx) => this.showMainDashboard(ctx));
+    this.bot.command('start', (ctx) => {
+      console.log('✅ /start command received from:', ctx.from.id); // Debug log
+      this.showMainDashboard(ctx).catch(e => {
+        console.error('Error in showMainDashboard:', e);
+        ctx.reply('⚠️ Bot error - please try again');
+      });
+    });
 
     // Unified callback handler
     this.bot.on('callback_query:data', async (ctx) => {
