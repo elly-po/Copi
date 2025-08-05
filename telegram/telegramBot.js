@@ -218,6 +218,27 @@ Need help? Contact support: @YourSupportHandle`;
                 reply_markup: this.getMainMenuKeyboard()
             });
         });
+        
+        this.bot.callbackQuery('wallet_menu', async (ctx) => {
+            await ctx.answerCallbackQuery();
+            await ctx.conversation.enter('walletSetup');
+        });
+        
+        this.bot.callbackQuery('alpha_menu', async (ctx) => {
+            await ctx.answerCallbackQuery();
+            await ctx.conversation.enter('alphaWallet');
+        });
+        
+        this.bot.callbackQuery('settings_menu', async (ctx) => {
+            await ctx.answerCallbackQuery();
+            await ctx.conversation.enter('settings');
+        });
+        
+        this.bot.callbackQuery('trades_menu', async (ctx) => {
+            await ctx.answerCallbackQuery();
+            const user = await this.getOrCreateUser(ctx);
+            await this.showRecentTrades(ctx, user);
+        });
 
         // Quick balance check
         this.bot.callbackQuery('quick_balance', async (ctx) => {
