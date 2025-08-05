@@ -287,4 +287,4 @@ class CopyTradingBot {
   }
 }
 
-module.exports = CopyTradingBot();
+module.exports = new CopyTradingBot();
