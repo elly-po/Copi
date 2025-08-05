@@ -10,7 +10,7 @@
   "dependencies": {
     "@solana/web3.js": "^1.87.6",
     "@solana/spl-token": "^0.3.9",
-    "@grammyjs/conversations": "^1.x.x",
+    "@grammyjs/conversations": "^2.1.0",
     "grammy": "^1.21.1",
     "ws": "^8.14.2",
     "axios": "^1.6.2",
