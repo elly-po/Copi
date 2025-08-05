@@ -1,843 +1,570 @@
-const { Bot, Keyboard, InlineKeyboard, session } = require('grammy');
-const { conversations, createConversation } = require('@grammyjs/conversations');
-const database = require('../database/database');
-const walletManager = require('../wallet/walletManager');
-const config = require('../config/config');
+const { Bot, Keyboard, InlineKeyboard } = require('grammy');
+const Database = require('./database');
+require('dotenv').config();
 
-class TelegramBot {
-    constructor() {
-        this.bot = null;
-        this.isRunning = false;
-        this.userSessions = new Map();
+class CopyTradingBot {
+  constructor() {
+    this.bot = new Bot(process.env.TELEGRAM_BOT_TOKEN);
+    this.db = Database;
+    this.userStates = new Map();
+    this.setupHandlers();
+  }
+
+  setupHandlers() {
+    // Command handlers
+    this.bot.command('start', (ctx) => this.handleStart(ctx));
+    this.bot.command('help', (ctx) => this.handleHelp(ctx));
+    this.bot.command('status', (ctx) => this.handleStatus(ctx));
+    this.bot.command('trades', (ctx) => this.handleTrades(ctx));
+
+    // Callback query handler
+    this.bot.on('callback_query:data', async (ctx) => {
+      await this.handleCallback(ctx);
+    });
+
+    // Message handler for wallet addresses
+    this.bot.on('message', (ctx) => this.handleMessage(ctx));
+
+    console.log('Telegram bot started and listening...');
+  }
+
+  async handleStart(ctx) {
+    const chatId = ctx.chat.id;
+    const telegramId = ctx.from.id.toString();
+
+    try {
+      // Check if user exists
+      let user = await this.db.getUser(telegramId);
+      
+      if (!user) {
+        await this.db.createUser(telegramId);
+        user = await this.db.getUser(telegramId);
+      }
+
+      const welcomeText = `🚀 Welcome to Solana Copy Trading Bot!
+
+This bot helps you copy trades from high-performance wallets in the Solana memecoin space.
+
+Click the buttons below to get started:`;
+
+      const keyboard = new InlineKeyboard()
+        .text('💰 Connect Wallet', 'connect_wallet')
+        .text('⚙️ Settings', 'settings').row()
+        .text('📊 View Tracked Wallets', 'view_wallets')
+        .text('📈 Trading Status', 'trading_status').row()
+        .text('📚 Help', 'help')
+        .text('📋 Recent Trades', 'recent_trades');
+
+      await ctx.reply(welcomeText, { reply_markup: keyboard });
+    } catch (error) {
+      console.error('Error in handleStart:', error);
+      await ctx.reply('❌ An error occurred. Please try again.');
     }
+  }
 
-    async initialize() {
-        try {
-            const configData = await config.get();
-            
-            if (!configData.telegram.botToken) {
-                throw new Error('Telegram bot token not found in config');
-            }
+  async handleCallback(ctx) {
+    const chatId = ctx.chat.id;
+    const telegramId = ctx.from.id.toString();
+    const data = ctx.callbackQuery.data;
 
-            this.bot = new Bot(configData.telegram.botToken);
+    try {
+      await ctx.answerCallbackQuery();
 
-            // Install session plugin
-            this.bot.use(session({
-                initial: () => ({
-                    step: 'idle',
-                    data: {}
-                })
-            }));
-
-            // Install conversations plugin
-            this.bot.use(conversations());
-
-            // Register conversations
-            this.bot.use(createConversation(this.walletSetupConversation.bind(this), 'walletSetup'));
-            this.bot.use(createConversation(this.alphaWalletConversation.bind(this), 'alphaWallet'));
-            this.bot.use(createConversation(this.settingsConversation.bind(this), 'settings'));
-
-            // Register command handlers
-            this.registerCommands();
-            this.registerCallbackHandlers();
-
-            // Error handling
-            this.bot.catch((err) => {
-                console.error('❌ Bot error:', err);
-            });
-
-            console.log('✅ Telegram bot initialized');
-
-        } catch (error) {
-            console.error('❌ Failed to initialize Telegram bot:', error);
-            throw error;
-        }
+      switch (data) {
+        case 'connect_wallet':
+          await this.showConnectWallet(ctx);
+          break;
+        case 'settings':
+          await this.showSettings(ctx);
+          break;
+        case 'view_wallets':
+          await this.showTrackedWallets(ctx);
+          break;
+        case 'trading_status':
+          await this.showTradingStatus(ctx);
+          break;
+        case 'help':
+          await this.showHelp(ctx);
+          break;
+        case 'recent_trades':
+          await this.showRecentTrades(ctx);
+          break;
+        case 'back_main':
+          await this.handleStart(ctx);
+          break;
+        default:
+          if (data.startsWith('setting_')) {
+            await this.handleSettingCallback(ctx, data);
+          } else if (data.startsWith('set_')) {
+            await this.handleSetValue(ctx, data);
+          }
+          break;
+      }
+    } catch (error) {
+      console.error('Error in handleCallback:', error);
+      await ctx.reply('❌ An error occurred. Please try again.');
     }
+  }
 
-    registerCommands() {
-        // Start command
-        this.bot.command('start', async (ctx) => {
-            await this.handleRateLimit(ctx, async () => {
-                const user = await this.getOrCreateUser(ctx);
-                
-                const welcomeMessage = `🚀 *Welcome to Alpha Wallet Copier Bot!*
+  async showConnectWallet(ctx) {
+    const telegramId = ctx.from.id.toString();
+    const user = await this.db.getUser(telegramId);
+    
+    if (user && user.wallet_address) {
+      const text = `✅ Wallet Connected!
 
-This bot helps you automatically copy trades from successful "alpha" wallets on Solana.
+Your wallet: \`${user.wallet_address}\`
 
-*Features:*
-• 📊 Track multiple alpha wallets
-• 💰 Auto-copy buy/sell trades
-• ⚙️ Customizable settings (amount, slippage, delays)
-• 📈 Trade history and PnL tracking
+⚠️ **Security Note:** This bot uses wallet monitoring only. Your private keys are never shared or stored.`;
 
-*Quick Setup:*
-1️⃣ Connect your trading wallet: /wallet
-2️⃣ Add alpha wallets to track: /alpha
-3️⃣ Configure your settings: /settings
-4️⃣ Start copying: /toggle
+      const keyboard = new InlineKeyboard()
+        .text('🔄 Change Wallet', 'change_wallet').row()
+        .text('🔙 Back to Main', 'back_main');
 
-Type /help for all commands.`;
+      await ctx.reply(text, { 
+        reply_markup: keyboard, 
+        parse_mode: 'Markdown' 
+      });
+    } else {
+      const text = `🔗 Connect Your Solana Wallet
 
-                await ctx.reply(welcomeMessage, {
-                    parse_mode: 'Markdown',
-                    reply_markup: this.getMainMenuKeyboard()
-                });
-            });
-        });
+To start copy trading, please send your Solana wallet address.
 
-        // Help command
-        this.bot.command('help', async (ctx) => {
-            await this.handleRateLimit(ctx, async () => {
-                const helpMessage = `📚 *Available Commands:*
+⚠️ **Important:** 
+- Only send your PUBLIC wallet address
+- Never share your private key or seed phrase
+- The bot only monitors transactions, it cannot access your funds
 
-*Wallet Management:*
-/wallet - Connect or manage your trading wallet
-/balance - Check wallet balances
+Please paste your wallet address below:`;
 
-*Alpha Wallets:*
-/alpha - Add/remove alpha wallets to track
-/list - List your tracked alpha wallets
+      this.userStates.set(telegramId, 'waiting_wallet_address');
+      
+      const keyboard = new InlineKeyboard()
+        .text('🔙 Back to Main', 'back_main');
 
-*Settings:*
-/settings - Configure trading parameters
-/toggle - Enable/disable auto-copying
-
-*Trading:*
-/trades - View recent trades
-/pnl - Check profit/loss summary
-/stop - Emergency stop all trading
-
-*System:*
-/status - Check bot status
-/help - Show this help message
-
-Need help? Contact support: @YourSupportHandle`;
-
-                await ctx.reply(helpMessage, { parse_mode: 'Markdown' });
-            });
-        });
-
-        // Wallet command
-        this.bot.command('wallet', async (ctx) => {
-            await this.handleRateLimit(ctx, async () => {
-                await ctx.conversation.enter('walletSetup');
-            });
-        });
-
-        // Alpha wallet command
-        this.bot.command('alpha', async (ctx) => {
-            await this.handleRateLimit(ctx, async () => {
-                await ctx.conversation.enter('alphaWallet');
-            });
-        });
-
-        // Settings command
-        this.bot.command('settings', async (ctx) => {
-            await this.handleRateLimit(ctx, async () => {
-                await ctx.conversation.enter('settings');
-            });
-        });
-
-        // Balance command
-        this.bot.command('balance', async (ctx) => {
-            await this.handleRateLimit(ctx, async () => {
-                const user = await this.getOrCreateUser(ctx);
-                await this.showBalance(ctx, user);
-            });
-        });
-
-        // List alpha wallets
-        this.bot.command('list', async (ctx) => {
-            await this.handleRateLimit(ctx, async () => {
-                const user = await this.getOrCreateUser(ctx);
-                await this.showAlphaWallets(ctx, user);
-            });
-        });
-
-        // Toggle auto-mimic
-        this.bot.command('toggle', async (ctx) => {
-            await this.handleRateLimit(ctx, async () => {
-                const user = await this.getOrCreateUser(ctx);
-                const newStatus = !user.settings.autoMimic;
-                
-                await database.updateUser(user.id, {
-                    settings: { ...user.settings, autoMimic: newStatus }
-                });
-
-                const statusEmoji = newStatus ? '✅' : '❌';
-                const statusText = newStatus ? 'ENABLED' : 'DISABLED';
-                
-                await ctx.reply(`${statusEmoji} Auto-copying ${statusText}`);
-            });
-        });
-
-        // Show recent trades
-        this.bot.command('trades', async (ctx) => {
-            await this.handleRateLimit(ctx, async () => {
-                const user = await this.getOrCreateUser(ctx);
-                await this.showRecentTrades(ctx, user);
-            });
-        });
-
-        // Show PnL
-        this.bot.command('pnl', async (ctx) => {
-            await this.handleRateLimit(ctx, async () => {
-                const user = await this.getOrCreateUser(ctx);
-                await this.showPnL(ctx, user);
-            });
-        });
-
-        // Status command
-        this.bot.command('status', async (ctx) => {
-            await this.handleRateLimit(ctx, async () => {
-                await this.showSystemStatus(ctx);
-            });
-        });
-
-        // Emergency stop
-        this.bot.command('stop', async (ctx) => {
-            await this.handleRateLimit(ctx, async () => {
-                const user = await this.getOrCreateUser(ctx);
-                
-                await database.updateUser(user.id, {
-                    settings: { ...user.settings, autoMimic: false }
-                });
-
-                await ctx.reply('🛑 *EMERGENCY STOP ACTIVATED*\n\nAll auto-copying has been disabled.', {
-                    parse_mode: 'Markdown'
-                });
-            });
-        });
+      await ctx.reply(text, { reply_markup: keyboard });
     }
+  }
 
-    registerCallbackHandlers() {
-        // Main menu callbacks
-        this.bot.callbackQuery('main_menu', async (ctx) => {
-            await ctx.answerCallbackQuery();
-            await ctx.editMessageReplyMarkup({
-                reply_markup: this.getMainMenuKeyboard()
-            });
-        });
-        
-        this.bot.callbackQuery('wallet_menu', async (ctx) => {
-            await ctx.answerCallbackQuery();
-            await ctx.conversation.enter('walletSetup');
-        });
-        
-        this.bot.callbackQuery('alpha_menu', async (ctx) => {
-            await ctx.answerCallbackQuery();
-            await ctx.conversation.enter('alphaWallet');
-        });
-        
-        this.bot.callbackQuery('settings_menu', async (ctx) => {
-            await ctx.answerCallbackQuery();
-            await ctx.conversation.enter('settings');
-        });
-        
-        this.bot.callbackQuery('trades_menu', async (ctx) => {
-            await ctx.answerCallbackQuery();
-            const user = await this.getOrCreateUser(ctx);
-            await this.showRecentTrades(ctx, user);
-        });
+  async showSettings(ctx) {
+    const telegramId = ctx.from.id.toString();
+    const settings = await this.db.getUserSettings(telegramId);
+    
+    const text = `⚙️ **Trading Settings**
 
-        // Quick balance check
-        this.bot.callbackQuery('quick_balance', async (ctx) => {
-            await ctx.answerCallbackQuery();
-            const user = await this.getOrCreateUser(ctx);
-            await this.showBalance(ctx, user, true);
-        });
-
-        // Quick toggle
-        this.bot.callbackQuery('quick_toggle', async (ctx) => {
-            await ctx.answerCallbackQuery();
-            const user = await this.getOrCreateUser(ctx);
-            const newStatus = !user.settings.autoMimic;
-            
-            await database.updateUser(user.id, {
-                settings: { ...user.settings, autoMimic: newStatus }
-            });
-
-            const statusEmoji = newStatus ? '✅' : '❌';
-            const statusText = newStatus ? 'ON' : 'OFF';
-            
-            await ctx.editMessageText(`Auto-copying is now ${statusEmoji} ${statusText}`);
-        });
-    }
-
-    // Wallet setup conversation
-    async walletSetupConversation(conversation, ctx) {
-        const user = await this.getOrCreateUser(ctx);
-        
-        if (user.wallet) {
-            const keyboard = new InlineKeyboard()
-                .text('📊 View Balance', 'view_balance')
-                .text('🔄 Change Wallet', 'change_wallet').row()
-                .text('🗑️ Remove Wallet', 'remove_wallet')
-                .text('◀️ Back', 'main_menu');
-
-            await ctx.reply(`💳 *Current Wallet:*\n\`${user.wallet.publicKey}\``, {
-                parse_mode: 'Markdown',
-                reply_markup: keyboard
-            });
-            return;
-        }
-
-        await ctx.reply(`💳 *Wallet Setup*
-
-To start copying trades, you need to connect a Solana wallet.
-
-⚠️ *Security Notice:*
-• Your private key will be encrypted and stored securely
-• Never share your private key with anyone else
-• Use a dedicated trading wallet with limited funds
-
-Please send your wallet's private key in one of these formats:
-• Base58 encoded string
-• JSON array (e.g., [1,2,3,...])
-
-Type /cancel to abort.`);
-
-        const response = await conversation.wait();
-        
-        if (response.message?.text === '/cancel') {
-            await ctx.reply('❌ Wallet setup cancelled');
-            return;
-        }
-
-        try {
-            const privateKey = response.message?.text;
-            if (!privateKey) {
-                throw new Error('No private key provided');
-            }
-
-            // Import and validate wallet
-            const wallet = walletManager.importWallet(privateKey);
-            
-            // Encrypt private key for storage
-            const configData = await config.get();
-            const encryptedKey = walletManager.encryptPrivateKey(
-                privateKey,
-                configData.security.encryptionKey
-            );
-
-            // Update user with wallet info
-            await database.updateUser(user.id, {
-                wallet: {
-                    publicKey: wallet.publicKey,
-                    encryptedPrivateKey: encryptedKey,
-                    connectedAt: Date.now()
-                }
-            });
-
-            // Get balance
-            const balance = await walletManager.getSOLBalance(wallet.publicKey);
-
-            await ctx.reply(`✅ *Wallet Connected Successfully!*
-
-*Address:* \`${wallet.publicKey}\`
-*Balance:* ${balance.toFixed(4)} SOL
-
-Your wallet is now ready for copy trading!`, {
-                parse_mode: 'Markdown'
-            });
-
-        } catch (error) {
-            await ctx.reply(`❌ *Error connecting wallet:*\n${error.message}\n\nPlease try again with a valid private key.`);
-        }
-    }
-
-    // Alpha wallet conversation
-    async alphaWalletConversation(conversation, ctx) {
-        const user = await this.getOrCreateUser(ctx);
-        const alphaWallets = await database.getAlphaWallets(user.id);
-
-        let message = '👑 *Alpha Wallet Management*\n\n';
-        
-        if (alphaWallets.length > 0) {
-            message += '*Currently Tracking:*\n';
-            alphaWallets.forEach((wallet, index) => {
-                message += `${index + 1}. \`${wallet.address}\`\n   ${wallet.label || 'No label'}\n`;
-            });
-            message += '\n';
-        }
-
-        message += `*Options:*
-• Send a wallet address to add it
-• Send "remove X" to remove wallet #X
-• Send "label X Your Label" to add a label
-• Send /done to finish`;
-
-        await ctx.reply(message, { parse_mode: 'Markdown' });
-
-        while (true) {
-            const response = await conversation.wait();
-            const text = response.message?.text;
-
-            if (!text) continue;
-
-            if (text === '/done') {
-                await ctx.reply('✅ Alpha wallet management completed');
-                break;
-            }
-
-            if (text.startsWith('remove ')) {
-                const index = parseInt(text.split(' ')[1]) - 1;
-                if (index >= 0 && index < alphaWallets.length) {
-                    const wallet = alphaWallets[index];
-                    await database.removeAlphaWallet(user.id, wallet.id);
-                    await ctx.reply(`✅ Removed wallet: ${wallet.address}`);
-                    alphaWallets.splice(index, 1);
-                } else {
-                    await ctx.reply('❌ Invalid wallet number');
-                }
-                continue;
-            }
-
-            if (text.startsWith('label ')) {
-                const parts = text.split(' ');
-                const index = parseInt(parts[1]) - 1;
-                const label = parts.slice(2).join(' ');
-                
-                if (index >= 0 && index < alphaWallets.length && label) {
-                    // Update label logic would go here
-                    await ctx.reply(`✅ Added label "${label}" to wallet #${index + 1}`);
-                } else {
-                    await ctx.reply('❌ Usage: label <number> <label>');
-                }
-                continue;
-            }
-
-            // Try to add as wallet address
-            if (walletManager.isValidWalletAddress(text)) {
-                try {
-                    const wallet = await database.addAlphaWallet(user.id, text);
-                    alphaWallets.push(wallet);
-                    
-                    // Add to blockchain monitor
-                    const blockchainMonitor = require('../blockchain/blockchainMonitor');
-                    await blockchainMonitor.addWalletToMonitor(text);
-                    
-                    await ctx.reply(`✅ Added alpha wallet: \`${text}\``, {
-                        parse_mode: 'Markdown'
-                    });
-                } catch (error) {
-                    await ctx.reply(`❌ Error adding wallet: ${error.message}`);
-                }
-            } else {
-                await ctx.reply('❌ Invalid wallet address format');
-            }
-        }
-    }
-
-    // Settings conversation
-    async settingsConversation(conversation, ctx) {
-        const user = await this.getOrCreateUser(ctx);
-        const settings = user.settings;
-
-        await ctx.reply(`⚙️ *Current Settings:*
-
-💰 Trade Amount: ${settings.tradeAmount} SOL
+💰 Max Trade Amount: ${settings.max_trade_amount} SOL
 📊 Slippage: ${settings.slippage}%
-🎯 Auto-Mimic: ${settings.autoMimic ? 'ON' : 'OFF'}
-📈 Buy Only: ${settings.buyOnly ? 'ON' : 'OFF'}
-📉 Sell Only: ${settings.sellOnly ? 'ON' : 'OFF'}
-⏰ Delay: ${settings.delay}ms
-🔄 Max Trades/Token: ${settings.maxTradesPerToken}
+💧 Min Liquidity: ${settings.min_liquidity} SOL
+⏱️ Tracking Period: ${settings.tracking_period}s
+🔄 Max Trades/Hour: ${settings.max_trades_per_hour}
+🤖 Auto Trading: ${settings.auto_trading ? '✅ ON' : '❌ OFF'}`;
 
-*Send new values:*
-• \`amount 0.05\` - Set trade amount
-• \`slippage 5\` - Set slippage %
-• \`delay 2000\` - Set delay in ms
-• \`maxtrades 5\` - Set max trades per token
-• \`buyonly on\` - Enable buy-only mode
-• \`sellonly on\` - Enable sell-only mode
-• /done - Finish`, {
-            parse_mode: 'Markdown'
-        });
+    const keyboard = new InlineKeyboard()
+      .text(`💰 Trade Amount (${settings.max_trade_amount})`, 'setting_max_amount')
+      .text(`📊 Slippage (${settings.slippage}%)`, 'setting_slippage').row()
+      .text(`💧 Min Liquidity (${settings.min_liquidity})`, 'setting_liquidity')
+      .text(`⏱️ Period (${settings.tracking_period}s)`, 'setting_period').row()
+      .text(`🔄 Max/Hour (${settings.max_trades_per_hour})`, 'setting_max_trades')
+      .text(`🤖 Auto: ${settings.auto_trading ? 'ON' : 'OFF'}`, 'setting_auto_toggle').row()
+      .text('💾 Save & Start Trading', 'start_trading')
+      .text('🔙 Back', 'back_main');
 
-        while (true) {
-            const response = await conversation.wait();
-            const text = response.message?.text?.toLowerCase();
+    try {
+      await ctx.editMessageText(text, {
+        reply_markup: keyboard,
+        parse_mode: 'Markdown'
+      });
+    } catch (error) {
+      await ctx.reply(text, { reply_markup: keyboard, parse_mode: 'Markdown' });
+    }
+  }
 
-            if (!text) continue;
+  async handleSettingCallback(ctx, data) {
+    const telegramId = ctx.from.id.toString();
+    const setting = data.replace('setting_', '');
+    
+    const settingInfo = {
+      max_amount: { name: 'Max Trade Amount', unit: 'SOL', min: 0.01, max: 10 },
+      slippage: { name: 'Slippage', unit: '%', min: 1, max: 20 },
+      liquidity: { name: 'Min Liquidity', unit: 'SOL', min: 100, max: 50000 },
+      period: { name: 'Tracking Period', unit: 'seconds', min: 60, max: 3600 },
+      max_trades: { name: 'Max Trades per Hour', unit: 'trades', min: 1, max: 50 },
+      auto_toggle: { name: 'Auto Trading', unit: '', min: 0, max: 1 }
+    };
 
-            if (text === '/done') {
-                await ctx.reply('✅ Settings updated');
-                break;
-            }
-
-            const parts = text.split(' ');
-            const command = parts[0];
-            const value = parts[1];
-
-            try {
-                const newSettings = { ...settings };
-
-                switch (command) {
-                    case 'amount':
-                        const amount = parseFloat(value);
-                        if (amount > 0 && amount <= 10) {
-                            newSettings.tradeAmount = amount;
-                            await ctx.reply(`✅ Trade amount set to ${amount} SOL`);
-                        } else {
-                            await ctx.reply('❌ Amount must be between 0 and 10 SOL');
-                        }
-                        break;
-
-                    case 'slippage':
-                        const slippage = parseFloat(value);
-                        if (slippage >= 0.1 && slippage <= 20) {
-                            newSettings.slippage = slippage;
-                            await ctx.reply(`✅ Slippage set to ${slippage}%`);
-                        } else {
-                            await ctx.reply('❌ Slippage must be between 0.1% and 20%');
-                        }
-                        break;
-
-                    case 'delay':
-                        const delay = parseInt(value);
-                        if (delay >= 0 && delay <= 30000) {
-                            newSettings.delay = delay;
-                            await ctx.reply(`✅ Delay set to ${delay}ms`);
-                        } else {
-                            await ctx.reply('❌ Delay must be between 0 and 30000ms');
-                        }
-                        break;
-
-                    case 'maxrades':
-                        const maxTrades = parseInt(value);
-                        if (maxTrades >= 1 && maxTrades <= 20) {
-                            newSettings.maxTradesPerToken = maxTrades;
-                            await ctx.reply(`✅ Max trades per token set to ${maxTrades}`);
-                        } else {
-                            await ctx.reply('❌ Max trades must be between 1 and 20');
-                        }
-                        break;
-
-                    case 'buyonly':
-                        newSettings.buyOnly = value === 'on';
-                        newSettings.sellOnly = false;
-                        await ctx.reply(`✅ Buy-only mode ${value === 'on' ? 'enabled' : 'disabled'}`);
-                        break;
-
-                    case 'sellonly':
-                        newSettings.sellOnly = value === 'on';
-                        newSettings.buyOnly = false;
-                        await ctx.reply(`✅ Sell-only mode ${value === 'on' ? 'enabled' : 'disabled'}`);
-                        break;
-
-                    default:
-                        await ctx.reply('❌ Unknown setting. Check /help for valid commands.');
-                        continue;
-                }
-
-                await database.updateUser(user.id, { settings: newSettings });
-                Object.assign(settings, newSettings);
-
-            } catch (error) {
-                await ctx.reply(`❌ Error updating setting: ${error.message}`);
-            }
-        }
+    if (setting === 'auto_toggle') {
+      const settings = await this.db.getUserSettings(telegramId);
+      await this.db.updateUserSettings(telegramId, { 
+        auto_trading: !settings.auto_trading 
+      });
+      await this.showSettings(ctx);
+      return;
     }
 
-    // Helper methods
-    async getOrCreateUser(ctx) {
-        const telegramId = ctx.from.id.toString();
-        let user = await database.getUser(telegramId);
-        
-        if (!user) {
-            user = await database.createUser(telegramId, {
-                username: ctx.from.username,
-                firstName: ctx.from.first_name,
-                lastName: ctx.from.last_name
-            });
-        }
-        
-        return user;
+    const info = settingInfo[setting];
+    if (!info) return;
+
+    const text = `🔧 **Set ${info.name}**
+
+Current value: **${await this.getCurrentSettingValue(telegramId, setting)} ${info.unit}**
+
+Range: ${info.min} - ${info.max} ${info.unit}
+
+Please enter the new value:`;
+
+    this.userStates.set(telegramId, `setting_${setting}`);
+
+    const keyboard = new InlineKeyboard()
+      .text('🔙 Back to Settings', 'settings');
+
+    await ctx.reply(text, { 
+      reply_markup: keyboard, 
+      parse_mode: 'Markdown' 
+    });
+  }
+
+  async getCurrentSettingValue(telegramId, setting) {
+    const settings = await this.db.getUserSettings(telegramId);
+    const mapping = {
+      max_amount: settings.max_trade_amount,
+      slippage: settings.slippage,
+      liquidity: settings.min_liquidity,
+      period: settings.tracking_period,
+      max_trades: settings.max_trades_per_hour
+    };
+    return mapping[setting] || 0;
+  }
+
+  async showTrackedWallets(ctx) {
+    const wallets = await this.db.getTrackedWallets();
+    
+    if (wallets.length === 0) {
+      const text = `📊 **Tracked Alpha Wallets**
+
+No wallets are currently being tracked.
+
+Contact the admin to add high-performance wallets to the tracking list.`;
+
+      const keyboard = new InlineKeyboard()
+        .text('🔙 Back to Main', 'back_main');
+
+      await ctx.reply(text, { 
+        reply_markup: keyboard, 
+        parse_mode: 'Markdown' 
+      });
+      return;
     }
 
-    async handleRateLimit(ctx, handler) {
-        const telegramId = ctx.from.id.toString();
-        const allowed = await database.checkRateLimit(telegramId);
-        
-        if (!allowed) {
-            await ctx.reply('⚠️ Rate limit exceeded. Please try again later.');
-            return;
-        }
-        
-        await handler();
+    let text = `📊 **Tracked Alpha Wallets** (${wallets.length})\n\n`;
+    
+    wallets.forEach((wallet, index) => {
+      text += `${index + 1}. **${wallet.name}**\n`;
+      text += `   📍 \`${wallet.wallet_address.slice(0, 8)}...${wallet.wallet_address.slice(-8)}\`\n`;
+      text += `   📈 Success Rate: ${wallet.success_rate.toFixed(1)}%\n`;
+      text += `   🔄 Total Trades: ${wallet.total_trades}\n\n`;
+    });
+
+    const keyboard = new InlineKeyboard()
+      .text('🔄 Refresh', 'view_wallets').row()
+      .text('🔙 Back to Main', 'back_main');
+
+    await ctx.reply(text, { 
+      reply_markup: keyboard, 
+      parse_mode: 'Markdown' 
+    });
+  }
+
+  async showTradingStatus(ctx) {
+    const telegramId = ctx.from.id.toString();
+    const user = await this.db.getUser(telegramId);
+    const settings = await this.db.getUserSettings(telegramId);
+    
+    if (!user || !user.wallet_address) {
+      await ctx.reply('❌ Please connect your wallet first.', {
+        reply_markup: new InlineKeyboard()
+          .text('🔗 Connect Wallet', 'connect_wallet').row()
+          .text('🔙 Back', 'back_main')
+      });
+      return;
     }
 
-    getMainMenuKeyboard() {
-        return new InlineKeyboard()
-            .text('💳 Wallet', 'wallet_menu')
-            .text('👑 Alpha Wallets', 'alpha_menu').row()
-            .text('⚙️ Settings', 'settings_menu')
-            .text('📊 Balance', 'quick_balance').row()
-            .text('🔄 Toggle Auto-Copy', 'quick_toggle')
-            .text('📈 Trades', 'trades_menu');
+    const statusIcon = settings.auto_trading ? '🟢' : '🔴';
+    const statusText = settings.auto_trading ? 'ACTIVE' : 'INACTIVE';
+
+    const text = `📈 **Trading Status**
+
+${statusIcon} Status: **${statusText}**
+
+👛 Connected Wallet: \`${user.wallet_address.slice(0, 8)}...${user.wallet_address.slice(-8)}\`
+💰 Max Trade Amount: ${settings.max_trade_amount} SOL
+🔄 Max Trades/Hour: ${settings.max_trades_per_hour}
+📊 Slippage: ${settings.slippage}%
+
+${settings.auto_trading ? '✅ Bot is actively monitoring and copying trades!' : '⚠️ Auto trading is disabled. Enable it in settings.'}`;
+
+    const keyboard = new InlineKeyboard()
+      .text(
+        settings.auto_trading ? '⏹️ Stop Trading' : '▶️ Start Trading', 
+        'setting_auto_toggle'
+      )
+      .text('⚙️ Settings', 'settings').row()
+      .text('🔙 Back to Main', 'back_main');
+
+    await ctx.reply(text, { 
+      reply_markup: keyboard, 
+      parse_mode: 'Markdown' 
+    });
+  }
+
+  async showRecentTrades(ctx) {
+    const telegramId = ctx.from.id.toString();
+    const trades = await this.db.getUserTrades(telegramId, 10);
+    
+    if (trades.length === 0) {
+      const text = `📋 **Recent Trades**
+
+No trades found. Start auto trading to see your copy trades here!`;
+
+      const keyboard = new InlineKeyboard()
+        .text('▶️ Start Trading', 'trading_status').row()
+        .text('🔙 Back to Main', 'back_main');
+
+      await ctx.reply(text, { reply_markup: keyboard });
+      return;
     }
 
-    async showBalance(ctx, user, isCallback = false) {
-        if (!user.wallet) {
-            const message = '❌ No wallet connected. Use /wallet to connect one.';
-            if (isCallback) {
-                await ctx.editMessageText(message);
-            } else {
-                await ctx.reply(message);
-            }
-            return;
-        }
+    let text = `📋 **Recent Trades** (${trades.length})\n\n`;
+    
+    trades.forEach((trade, index) => {
+      const date = new Date(trade.created_at).toLocaleString();
+      const pnlIcon = trade.profit_loss >= 0 ? '📈' : '📉';
+      const statusIcon = trade.status === 'completed' ? '✅' : '⏳';
+      
+      text += `${index + 1}. ${statusIcon} ${trade.trade_type}\n`;
+      text += `   💰 Amount: ${trade.amount} SOL\n`;
+      text += `   ${pnlIcon} P&L: ${trade.profit_loss.toFixed(4)} SOL\n`;
+      text += `   📅 ${date}\n\n`;
+    });
 
-        try {
-            const solBalance = await walletManager.getSOLBalance(user.wallet.publicKey);
-            const tokenAccounts = await walletManager.getTokenAccounts(user.wallet.publicKey);
-            
-            let message = `💰 *Wallet Balance*\n\n*SOL:* ${solBalance.toFixed(4)} SOL\n`;
-            
-            if (tokenAccounts.length > 0) {
-                message += '\n*Tokens:*\n';
-                tokenAccounts.slice(0, 10).forEach(token => {
-                    message += `• ${token.balance.toFixed(6)} (${token.mint.slice(0, 8)}...)\n`;
-                });
-                
-                if (tokenAccounts.length > 10) {
-                    message += `... and ${tokenAccounts.length - 10} more tokens\n`;
-                }
-            }
+    const keyboard = new InlineKeyboard()
+      .text('🔄 Refresh', 'recent_trades').row()
+      .text('🔙 Back to Main', 'back_main');
 
-            if (isCallback) {
-                await ctx.editMessageText(message, { parse_mode: 'Markdown' });
-            } else {
-                await ctx.reply(message, { parse_mode: 'Markdown' });
-            }
+    await ctx.reply(text, { 
+      reply_markup: keyboard, 
+      parse_mode: 'Markdown' 
+    });
+  }
 
-        } catch (error) {
-            const errorMessage = `❌ Error fetching balance: ${error.message}`;
-            if (isCallback) {
-                await ctx.editMessageText(errorMessage);
-            } else {
-                await ctx.reply(errorMessage);
-            }
-        }
+  async showHelp(ctx) {
+    const text = `📚 **Help & Instructions**
+
+**🚀 Getting Started:**
+1. Connect your Solana wallet (public address only)
+2. Configure your trading settings
+3. Enable auto trading
+4. The bot will copy trades from tracked alpha wallets
+
+**⚙️ Settings Explained:**
+• **Max Trade Amount**: Maximum SOL per trade
+• **Slippage**: Price tolerance for trades (1-20%)
+• **Min Liquidity**: Minimum token liquidity to trade
+• **Tracking Period**: How often to check for new trades
+• **Max Trades/Hour**: Rate limit for safety
+
+**🔒 Security:**
+• Only your public wallet address is used
+• Private keys are never requested or stored
+• All trades are executed through Jupiter DEX
+• You maintain full control of your funds
+
+**⚠️ Risks:**
+• Copy trading involves high risk
+• Only invest what you can afford to lose
+• Memecoins are highly volatile
+• Past performance doesn't guarantee future results
+
+**📞 Support:**
+If you need assistance, contact the admin.`;
+
+    const keyboard = new InlineKeyboard()
+      .text('🔙 Back to Main', 'back_main');
+
+    await ctx.reply(text, { 
+      reply_markup: keyboard, 
+      parse_mode: 'Markdown' 
+    });
+  }
+
+  async handleMessage(ctx) {
+    if (!ctx.message.text || ctx.message.text.startsWith('/')) return;
+
+    const chatId = ctx.chat.id;
+    const telegramId = ctx.from.id.toString();
+    const text = ctx.message.text.trim();
+    const userState = this.userStates.get(telegramId);
+
+    try {
+      if (userState === 'waiting_wallet_address') {
+        await this.handleWalletAddress(ctx, text);
+      } else if (userState && userState.startsWith('setting_')) {
+        await this.handleSettingValue(ctx, userState, text);
+      }
+    } catch (error) {
+      console.error('Error in handleMessage:', error);
+      await ctx.reply('❌ An error occurred processing your message.');
+    }
+  }
+
+  async handleWalletAddress(ctx, address) {
+    const chatId = ctx.chat.id;
+    const telegramId = ctx.from.id.toString();
+
+    // Validate Solana address format
+    if (!this.isValidSolanaAddress(address)) {
+      await ctx.reply('❌ Invalid Solana address format. Please try again.');
+      return;
     }
 
-    async showAlphaWallets(ctx, user) {
-        const alphaWallets = await database.getAlphaWallets(user.id);
-        
-        if (alphaWallets.length === 0) {
-            await ctx.reply('📝 No alpha wallets configured.\nUse /alpha to add some.');
-            return;
-        }
+    try {
+      await this.db.createUser(telegramId, address);
+      this.userStates.delete(telegramId);
 
-        let message = '👑 *Your Alpha Wallets:*\n\n';
-        
-        alphaWallets.forEach((wallet, index) => {
-            const status = wallet.isActive ? '✅' : '❌';
-            message += `${index + 1}. ${status} \`${wallet.address}\`\n`;
-            if (wallet.label) {
-                message += `   📝 ${wallet.label}\n`;
-            }
-            message += `   📊 ${wallet.totalTrades} trades tracked\n\n`;
-        });
+      const text = `✅ **Wallet Connected Successfully!**
 
-        await ctx.reply(message, { parse_mode: 'Markdown' });
+Your wallet: \`${address.slice(0, 8)}...${address.slice(-8)}\`
+
+You can now configure your trading settings and start copy trading!`;
+
+      const keyboard = new InlineKeyboard()
+        .text('⚙️ Configure Settings', 'settings').row()
+        .text('🔙 Back to Main', 'back_main');
+
+      await ctx.reply(text, { 
+        reply_markup: keyboard, 
+        parse_mode: 'Markdown' 
+      });
+    } catch (error) {
+      console.error('Error saving wallet:', error);
+      await ctx.reply('❌ Error saving wallet address. Please try again.');
+    }
+  }
+
+  async handleSettingValue(ctx, userState, value) {
+    const telegramId = ctx.from.id.toString();
+    const chatId = ctx.chat.id;
+    const setting = userState.replace('setting_', '');
+    const numValue = parseFloat(value);
+
+    if (isNaN(numValue)) {
+      await ctx.reply('❌ Please enter a valid number.');
+      return;
     }
 
-    async showRecentTrades(ctx, user) {
-        const trades = await database.getUserTrades(user.id, 10);
-        
-        if (trades.length === 0) {
-            await ctx.reply('📝 No trades found.');
-            return;
-        }
+    // Validate ranges
+    const ranges = {
+      max_amount: { min: 0.01, max: 10 },
+      slippage: { min: 1, max: 20 },
+      liquidity: { min: 100, max: 50000 },
+      period: { min: 60, max: 3600 },
+      max_trades: { min: 1, max: 50 }
+    };
 
-        let message = '📈 *Recent Trades:*\n\n';
-        
-        trades.forEach(trade => {
-            const status = trade.success ? '✅' : '❌';
-            const type = trade.type.toUpperCase();
-            const date = new Date(trade.timestamp).toLocaleString();
-            
-            message += `${status} ${type} - ${date}\n`;
-            if (trade.success && trade.copySignature) {
-                message += `🔗 [View Transaction](https://solscan.io/tx/${trade.copySignature})\n`;
-            }
-            if (trade.error) {
-                message += `❌ ${trade.error}\n`;
-            }
-            message += '\n';
-        });
-
-        await ctx.reply(message, { 
-            parse_mode: 'Markdown',
-            disable_web_page_preview: true 
-        });
+    const range = ranges[setting];
+    if (range && (numValue < range.min || numValue > range.max)) {
+      await ctx.reply(`❌ Value must be between ${range.min} and ${range.max}.`);
+      return;
     }
 
-    async showPnL(ctx, user) {
-        const trades = await database.getUserTrades(user.id, 100);
-        
-        if (trades.length === 0) {
-            await ctx.reply('📝 No trades to calculate PnL.');
-            return;
-        }
+    try {
+      const updateObj = {};
+      const fieldMapping = {
+        max_amount: 'max_trade_amount',
+        slippage: 'slippage',
+        liquidity: 'min_liquidity',
+        period: 'tracking_period',
+        max_trades: 'max_trades_per_hour'
+      };
 
-        const successfulTrades = trades.filter(t => t.success);
-        const failedTrades = trades.filter(t => !t.success);
-        
-        // Simple PnL calculation (would need price data for accurate calculation)
-        const totalTrades = trades.length;
-        const successRate = (successfulTrades.length / totalTrades * 100).toFixed(1);
-        
-        const message = `📊 *Trading Summary:*
+      updateObj[fieldMapping[setting]] = numValue;
+      await this.db.updateUserSettings(telegramId, updateObj);
+      
+      this.userStates.delete(telegramId);
 
-📈 Total Trades: ${totalTrades}
-✅ Successful: ${successfulTrades.length}
-❌ Failed: ${failedTrades.length}
-🎯 Success Rate: ${successRate}%
+      await ctx.reply(`✅ Setting updated successfully!`);
+      
+      // Show settings again
+      setTimeout(() => {
+        this.showSettings(ctx);
+      }, 1000);
 
-💡 *Note:* Detailed PnL calculation requires price tracking integration.`;
-
-        await ctx.reply(message, { parse_mode: 'Markdown' });
+    } catch (error) {
+      console.error('Error updating setting:', error);
+      await ctx.reply('❌ Error updating setting. Please try again.');
     }
+  }
 
-    async showSystemStatus(ctx) {
-        try {
-            const blockchainMonitor = require('../blockchain/blockchainMonitor');
-            const copyTrader = require('../trading/copyTrader');
-            
-            const monitorStatus = blockchainMonitor.getStatus();
-            const traderStatus = copyTrader.getStatus();
-            const networkHealthy = await walletManager.isHealthy();
-            
-            const message = `🔧 *System Status:*
+  isValidSolanaAddress(address) {
+    // Basic Solana address validation
+    return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address) && address.length >= 32 && address.length <= 44;
+  }
 
-*Blockchain Monitor:*
-${monitorStatus.isMonitoring ? '✅' : '❌'} Monitoring: ${monitorStatus.isMonitoring ? 'ON' : 'OFF'}
-👀 Watching: ${monitorStatus.monitoredWallets} wallets
-🔌 WebSocket: ${monitorStatus.wsConnected ? 'Connected' : 'Disconnected'}
+  async handleHelp(ctx) {
+    await this.showHelp(ctx);
+  }
 
-*Copy Trader:*
-⏳ Queue: ${traderStatus.queueLength} pending
-🔄 Active: ${traderStatus.activeTrades}/${traderStatus.maxConcurrentTrades}
-📊 Processing: ${traderStatus.isProcessing ? 'YES' : 'NO'}
+  async handleStatus(ctx) {
+    await this.showTradingStatus(ctx);
+  }
 
-*Network:*
-🌐 Solana RPC: ${networkHealthy ? '✅ Healthy' : '❌ Unhealthy'}
+  async handleTrades(ctx) {
+    await this.showRecentTrades(ctx);
+  }
 
-*Bot:*
-🤖 Status: ${this.isRunning ? '✅ Running' : '❌ Stopped'}`;
+  // Method to send trade notifications
+  async sendTradeNotification(telegramId, tradeData) {
+    try {
+      const { tradeRecord, tokenSymbol, tokenName } = tradeData;
+      
+      const text = `🎯 **Trade Executed!**
 
-            await ctx.reply(message, { parse_mode: 'Markdown' });
+💰 Token: ${tokenSymbol} (${tokenName})
+📊 Type: ${tradeRecord.tradeType}
+💵 Amount: ${tradeRecord.amount} SOL
+💲 Price: ${tradeRecord.price.toFixed(8)}
+🔗 Signature: \`${tradeRecord.signature.slice(0, 16)}...\`
 
-        } catch (error) {
-            await ctx.reply(`❌ Error getting system status: ${error.message}`);
-        }
+✅ Trade completed successfully!`;
+
+      const keyboard = new InlineKeyboard()
+        .text('📈 View All Trades', 'recent_trades').row()
+        .text('⚙️ Settings', 'settings');
+
+      await this.bot.api.sendMessage(telegramId, text, { 
+        reply_markup: keyboard, 
+        parse_mode: 'Markdown' 
+      });
+    } catch (error) {
+      console.error('Error sending trade notification:', error);
     }
+  }
 
-    // Send notification to user
-    async sendNotification(userId, message, options = {}) {
-        try {
-            await this.bot.api.sendMessage(userId, message, {
-                parse_mode: 'Markdown',
-                disable_notification: options.silent || false,
-                ...options
-            });
-        } catch (error) {
-            console.error(`Failed to send notification to ${userId}:`, error);
-        }
+  async sendTradeError(telegramId, errorData) {
+    try {
+      const { error, tokenSymbol } = errorData;
+      
+      const text = `❌ **Trade Failed**
+
+💰 Token: ${tokenSymbol}
+🚫 Error: ${error}
+
+The trade could not be executed. Please check your settings and try again.`;
+
+      await this.bot.api.sendMessage(telegramId, text);
+    } catch (error) {
+      console.error('Error sending trade error notification:', error);
     }
-
-    // Send trade notification
-    async sendTradeNotification(userId, tradeData) {
-        try {
-            const { swapData, tradeResult } = tradeData;
-            const status = tradeResult.success ? '✅' : '❌';
-            const type = swapData.type.toUpperCase();
-            
-            let message = `${status} *${type} Trade ${tradeResult.success ? 'Completed' : 'Failed'}*\n\n`;
-            
-            if (tradeResult.success) {
-                message += `🔗 Alpha Wallet: \`${swapData.wallet.slice(0, 8)}...\`\n`;
-                message += `💰 Amount: ${swapData.type === 'buy' ? tradeResult.inputAmount / 1e9 : tradeResult.outputAmount / 1e9} SOL\n`;
-                
-                if (tradeResult.signature) {
-                    message += `📋 [View Transaction](https://solscan.io/tx/${tradeResult.signature})\n`;
-                }
-                
-                if (tradeResult.priceImpact) {
-                    message += `📊 Price Impact: ${tradeResult.priceImpact}%\n`;
-                }
-            } else {
-                message += `❌ Error: ${tradeResult.error}\n`;
-            }
-
-            await this.sendNotification(userId, message);
-
-        } catch (error) {
-            console.error('Error sending trade notification:', error);
-        }
-    }
-
-    // Start the bot
-    async start() {
-        if (this.isRunning) {
-            console.log('⚠️ Bot is already running');
-            return;
-        }
-
-        try {
-            await this.bot.start();
-            this.isRunning = true;
-            console.log('🚀 Telegram bot started');
-
-        } catch (error) {
-            console.error('❌ Failed to start bot:', error);
-            throw error;
-        }
-    }
-
-    // Stop the bot
-    async stop() {
-        if (!this.isRunning) {
-            console.log('⚠️ Bot is not running');
-            return;
-        }
-
-        try {
-            await this.bot.stop();
-            this.isRunning = false;
-            console.log('🛑 Telegram bot stopped');
-
-        } catch (error) {
-            console.error('❌ Error stopping bot:', error);
-        }
-    }
-
-    // Broadcast message to all active users
-    async broadcast(message, options = {}) {
-        try {
-            const users = await database.getAllUsers();
-            const promises = users.map(user => 
-                this.sendNotification(user.id, message, options)
-            );
-            
-            await Promise.allSettled(promises);
-            console.log(`📢 Broadcast sent to ${users.length} users`);
-
-        } catch (error) {
-            console.error('Error broadcasting message:', error);
-        }
-    }
-
-    // Get bot statistics
-    getStats() {
-        return {
-            isRunning: this.isRunning,
-            activeSessions: this.userSessions.size
-        };
-    }
+  }
 }
 
-module.exports = new TelegramBot();
+module.exports = CopyTradingBot;
