@@ -28,6 +28,9 @@ class CopyTradingSystem {
       // Start wallet tracker
       await this.walletTracker.start();
 
+      // Start telegram bot
+      await this.telegramBot.bot.start();
+      
       this.isRunning = true;
       console.log('✅ Copy Trading System is running!');
       console.log('📱 Telegram bot is ready for users');
