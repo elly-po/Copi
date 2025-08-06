@@ -53,11 +53,11 @@ class HeliusClient extends EventEmitter {
       const mentionedWallet = payload?.params?.result?.value?.mentions?.[0];
       const rawLog = payload?.params?.result?.value?.logs;
 
-      if (Array.isArray(rawLog)) {
+      /*if (Array.isArray(rawLog)) {
         console.log(`🧾 [Raw Logs] ${rawLog.join(' | ')} | [Signature] ${signature}`);
       } else {
         console.warn('⚠️ No logs found in payload:', payload);
-      }
+      }*/
 
       if (!signature || !mentionedWallet) return;
 
@@ -67,11 +67,14 @@ class HeliusClient extends EventEmitter {
       if (isAlpha) {
         this.telemetry.signalsReceived++;
         this.telemetry.lastSignalTime = Date.now();
+        
+        if (Array.isArray(rawLog)) {
+          console.log(`📩 [Alpha Logs] ${rawLog.join(' | ')} | ✏[Signature] ${signature}`);
+        } else {
+          console.warn(`⚠️ No logs for alpha wallet ${mentionedWallet}`);
+        }
         console.log(`🧠 [Alpha] ${mentionedWallet} emitted tx: ${signature}`);
         await this.handleSignature(signature, mentionedWallet);
-      } else if (isKeepAlive) {
-        this.telemetry.keepAliveHits++;
-        console.log(`⚙️ [KeepAlive] Activity from ${mentionedWallet}: ${signature}`);
       }
     });
 
