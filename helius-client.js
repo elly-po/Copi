@@ -68,6 +68,13 @@ class HeliusClient extends EventEmitter {
       const payload = JSON.parse(message);
       const signature = payload?.params?.result?.value?.signature;
       const mentionedWallet = payload?.params?.result?.value?.mentions?.[0];
+      const rawLog = payload?.params?.result?.value?.logs;
+      
+      if (Array.isArray(rawLog)) {
+        console.log(`🧾 [Raw Logs] ${rawLog.join(' | ')} | [signature] ${signature}`);
+      } else {
+        console.warn('⚠️ No logs found in payload:', payload);
+      }
 
       if (!signature || !mentionedWallet) return;
 
