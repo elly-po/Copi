@@ -4,10 +4,13 @@ class HeliusClient {
   constructor() {
     this.apiKey = process.env.HELIUS_API_KEY;
     this.baseURL = 'https://api.helius.xyz/v1';
-    this.rpcURL = 'https://api.mainnet-beta.solana.com'; //`https://mainnet.helius.rpcpool.com/?api-key=${this.apiKey}`;
+    this.rpcURL = `https://mainnet.helius.rpcpool.com/?api-key=${this.apiKey}`;
     this.lastRequestTime = 0;
     this.rateLimitDelay = parseInt(process.env.RATE_LIMIT_DELAY) || 1000;
-    console.log('🧠 [HeliusClient] Initialized with baseURL:', this.baseURL);
+
+    console.log('🧠 [HeliusClient] Initialized');
+    console.log('🔗 baseURL:', this.baseURL);
+    console.log('🔗 rpcURL:', this.rpcURL);
   }
 
   async waitForRateLimit() {
@@ -16,75 +19,72 @@ class HeliusClient {
 
     if (timeSinceLastRequest < this.rateLimitDelay) {
       const waitTime = this.rateLimitDelay - timeSinceLastRequest;
-      console.log(`⏳ [RateLimit] Waiting ${waitTime}ms to respect rate limit`);
+      console.log(`⏳ [RateLimit] Waiting ${waitTime}ms`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
     }
 
     this.lastRequestTime = Date.now();
   }
 
-  /**
-   * ✅ COMPATIBLE: Uses v1/transactions endpoint without paid-tier filters
-   */
   async getTransactions(address, beforeSignature = null, limit = 10) {
-    console.log(`📡 [getTransactions] Fetching ALL txs for ${address} | before: ${beforeSignature} | limit: ${limit}`);
+    console.log(`📡 [getTransactions] Fetching txs for ${address}`);
     await this.waitForRateLimit();
 
+    const endpoint = `${this.baseURL}/transactions?api-key=${this.apiKey}`;
+    const body = {
+      accounts: [address],
+      limit,
+    };
+    if (beforeSignature) body.before = beforeSignature;
+
+    console.log(`🔍 [getTransactions] POST to: ${endpoint}`);
+    console.log(`📦 Payload:`, JSON.stringify(body, null, 2));
+
     try {
-      const body = {
-        accounts: [address],
-        limit,
-      };
+      const response = await axios.post(endpoint, body, {
+        headers: { 'Content-Type': 'application/json' },
+      });
 
-      if (beforeSignature) {
-        body.before = beforeSignature;
-      }
-
-      const response = await axios.post(
-        `${this.baseURL}/transactions?api-key=${this.apiKey}`,
-        body,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-
-      console.log(`✅ [getTransactions] Retrieved ${response.data.length} txs for ${address}`);
+      console.log(`✅ [getTransactions] Retrieved ${response.data.length} txs`);
       return response.data;
     } catch (error) {
-      console.error(`❌ [getTransactions] Failed for ${address}:`, error.response?.data || error.message);
+      console.error(`❌ [getTransactions] Failed for ${address}`);
+      console.error(`🧾 Raw error:`, error.response?.data || error.message);
       return [];
     }
   }
 
   async getTokenAccounts(address) {
-    console.log(`📡 [getTokenAccounts] Fetching token accounts for ${address}`);
+    console.log(`📡 [getTokenAccounts] Fetching for ${address}`);
     await this.waitForRateLimit();
 
-    try {
-      const response = await axios.post(this.rpcURL, {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'getTokenAccountsByOwner',
-        params: [
-          address,
-          { programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' },
-          { encoding: 'jsonParsed' }
-        ]
-      });
+    const payload = {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'getTokenAccountsByOwner',
+      params: [
+        address,
+        { programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' },
+        { encoding: 'jsonParsed' }
+      ]
+    };
 
+    console.log(`🔍 [getTokenAccounts] POST to: ${this.rpcURL}`);
+    console.log(`📦 Payload:`, JSON.stringify(payload, null, 2));
+
+    try {
+      const response = await axios.post(this.rpcURL, payload);
       const accounts = response.data.result?.value || [];
-      console.log(`✅ [getTokenAccounts] Found ${accounts.length} token accounts for ${address}`);
+      console.log(`✅ Found ${accounts.length} token accounts`);
       return accounts;
     } catch (error) {
-      console.error('❌ [getTokenAccounts] Error:', error.message);
+      console.error(`❌ [getTokenAccounts] Error:`, error.response?.data || error.message);
       throw error;
     }
   }
 
   async getTokenMetadata(tokenAddress) {
-    console.log(`📡 [getTokenMetadata] Fetching metadata for token: ${tokenAddress}`);
+    console.log(`📡 [getTokenMetadata] Fetching for ${tokenAddress}`);
     await this.waitForRateLimit();
 
     try {
@@ -97,19 +97,19 @@ class HeliusClient {
 
       const metadata = response.data[0] || null;
       if (metadata) {
-        console.log(`✅ [getTokenMetadata] Found metadata for ${tokenAddress}: Symbol=${metadata.symbol}`);
+        console.log(`✅ Symbol=${metadata.symbol}`);
       } else {
-        console.log(`⚠️ [getTokenMetadata] No metadata found for ${tokenAddress}`);
+        console.log(`⚠️ No metadata found`);
       }
       return metadata;
     } catch (error) {
-      console.error('❌ [getTokenMetadata] Error:', error.message);
+      console.error(`❌ [getTokenMetadata] Error:`, error.response?.data || error.message);
       return null;
     }
   }
 
   async getTokenPrice(tokenAddress) {
-    console.log(`📡 [getTokenPrice] Fetching price for ${tokenAddress}`);
+    console.log(`📡 [getTokenPrice] Fetching for ${tokenAddress}`);
     await this.waitForRateLimit();
 
     try {
@@ -117,44 +117,41 @@ class HeliusClient {
       const priceData = response.data.data[tokenAddress] || null;
 
       if (priceData) {
-        console.log(`💰 [getTokenPrice] Price found: $${priceData.price}`);
+        console.log(`💰 Price: $${priceData.price}`);
       } else {
-        console.log(`⚠️ [getTokenPrice] No price data for ${tokenAddress}`);
+        console.log(`⚠️ No price data`);
       }
 
       return priceData;
     } catch (error) {
-      console.error('❌ [getTokenPrice] Error:', error.message);
+      console.error(`❌ [getTokenPrice] Error:`, error.response?.data || error.message);
       return null;
     }
   }
 
   parseSwapTransaction(transaction) {
-    console.log(`🔍 [parseSwapTransaction] Parsing txn: ${transaction.signature}`);
+    console.log(`🔍 [parseSwapTransaction] Parsing ${transaction.signature}`);
     try {
       const swapData = {
         signature: transaction.signature,
-        protocol: null,           // new: track protocol
+        protocol: null,
         tokenIn: null,
         tokenOut: null,
         amountIn: 0,
         amountOut: 0,
         timestamp: transaction.timestamp
       };
-      
+
       const instructions = transaction.instructions || [];
-      console.log(`ℹ️ [parseSwapTransaction] Instructions count: ${instructions.length}`);
-      
+      console.log(`ℹ️ Instructions: ${instructions.length}`);
+
       for (const instruction of instructions) {
         const program = instruction.programId;
-        
-        // Debug: Log each instruction in full
         console.log('📦 Instruction:', JSON.stringify(instruction, null, 2));
-        
+
         const accounts = instruction.accounts || [];
-        console.log(`🔎 Instruction from program ${program} | Accounts: ${accounts.length}`);
-        
-        // Match known protocols
+        console.log(`🔎 Program ${program} | Accounts: ${accounts.length}`);
+
         if (program === 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4') {
           swapData.protocol = 'Jupiter';
         } else if (program === '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM') {
@@ -162,28 +159,25 @@ class HeliusClient {
         } else if (program === 'EhpHV7B2r4F4zHF2qNpANKKLNEtCT6Z6LNHNz8Xr8kLJ') {
           swapData.protocol = 'Orca';
         } else {
-          // Not a known swap program
           continue;
         }
-        
-        // Log matched protocol
-        console.log(`🔁 Swap detected via ${swapData.protocol}`);
-        
-        // Safely extract token accounts (you can refine later)
+
+        console.log(`🔁 Swap via ${swapData.protocol}`);
+
         if (accounts.length >= 4) {
           swapData.tokenIn = accounts[2];
           swapData.tokenOut = accounts[3];
           console.log(`✅ tokenIn=${accounts[2]}, tokenOut=${accounts[3]}`);
         }
       }
-      // Final check
+
       if (swapData.tokenIn && swapData.tokenOut) {
         return swapData;
       } else {
-        console.log(`⚠️ Swap not confirmed – missing token accounts`);
+        console.log(`⚠️ Incomplete swap`);
         return null;
       }
-    
+
     } catch (error) {
       console.error(`❌ [parseSwapTransaction] Error:`, error.message);
       return null;
@@ -191,25 +185,25 @@ class HeliusClient {
   }
 
   async getRecentSwaps(walletAddress, limit = 5) {
-    console.log(`📡 [getRecentSwaps] Getting recent swaps for ${walletAddress}`);
+    console.log(`📡 [getRecentSwaps] For ${walletAddress}`);
     try {
-      const transactions = await this.getTransactions(walletAddress, null, limit * 3); // Fetch more to filter swaps
+      const transactions = await this.getTransactions(walletAddress, null, limit * 3);
       const swaps = [];
 
       for (const tx of transactions) {
         const swapData = this.parseSwapTransaction(tx);
         if (swapData) {
           swaps.push(swapData);
-          console.log(`🔄 [getRecentSwaps] Swap detected: ${swapData.signature}`);
+          console.log(`🔄 Swap: ${swapData.signature}`);
         }
 
         if (swaps.length >= limit) break;
       }
 
-      console.log(`✅ [getRecentSwaps] Found ${swaps.length} swap(s) for ${walletAddress}`);
+      console.log(`✅ Found ${swaps.length} swap(s)`);
       return swaps;
     } catch (error) {
-      console.error('❌ [getRecentSwaps] Error:', error.message);
+      console.error(`❌ [getRecentSwaps] Error:`, error.response?.data || error.message);
       return [];
     }
   }
