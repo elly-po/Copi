@@ -3,7 +3,7 @@ const axios = require('axios');
 class HeliusClient {
   constructor() {
     this.apiKey = process.env.HELIUS_API_KEY;
-    this.baseURL = 'https://api.helius.xyz/v1';
+    this.baseURL = 'https://api.helius.xyz/v0';
     this.rpcURL = `${process.env.HELIUS_RPC_URL}${this.apiKey}`;
     this.lastRequestTime = 0;
     this.rateLimitDelay = parseInt(process.env.RATE_LIMIT_DELAY) || 1000;
@@ -23,40 +23,33 @@ class HeliusClient {
     this.lastRequestTime = Date.now();
   }
 
-  /**
-   * ✅ Uses correct endpoint for fetching SWAP transactions
-   */
   async getTransactions(address, beforeSignature = null, limit = 10) {
-    console.log(`📡 [getTransactions] Fetching SWAP txs for ${address} | before: ${beforeSignature} | limit: ${limit}`);
+    console.log(`📡 [getTransactions] Fetching txs for ${address} | before: ${beforeSignature} | limit: ${limit}`);
     await this.waitForRateLimit();
 
     try {
-      const body = {
-        accounts: [address],
-        transactionTypes: ['SWAP'],
+      const params = {
+        address,
         limit,
+        commitment: 'confirmed'
       };
 
       if (beforeSignature) {
-        body.before = beforeSignature;
+        params.before = beforeSignature;
       }
 
-      const response = await axios.post(
-        `${this.baseURL}/transactions/by-address`,
-        body,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'api-key': this.apiKey
-          }
+      const response = await axios.get(`${this.baseURL}/addresses/${address}/transactions`, {
+        params: {
+          ...params,
+          'api-key': this.apiKey
         }
-      );
+      });
 
-      console.log(`✅ [getTransactions] Retrieved ${response.data.length} swap txs for ${address}`);
+      console.log(`✅ [getTransactions] Retrieved ${response.data.length} txs for ${address}`);
       return response.data;
     } catch (error) {
-      console.error(`❌ [getTransactions] Failed for ${address}:`, error.response?.data || error.message);
-      return [];
+      console.error(`❌ [getTransactions] Error for ${address}:`, error.message);
+      throw error;
     }
   }
 
