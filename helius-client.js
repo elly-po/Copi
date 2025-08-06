@@ -8,8 +8,9 @@ class HeliusClient extends EventEmitter {
     super();
 
     this.trackedWallets = wallets;
+    this.walletLabels = new Map(); // address → name
     this.keepAliveWallets = [
-      'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4' // High-traffic wallet
+      'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4'
     ];
 
     this.wsURL = `wss://rpc.helius.xyz/?api-key=${process.env.HELIUS_API_KEY}`;
@@ -35,7 +36,6 @@ class HeliusClient extends EventEmitter {
 
     this.ws.on('open', () => {
       console.log('✅ [WS] Connected to Helius');
-
       this.subscribeToWallets();
       this.backoff = 0;
 
@@ -53,28 +53,27 @@ class HeliusClient extends EventEmitter {
       const mentionedWallet = payload?.params?.result?.value?.mentions?.[0];
       const rawLog = payload?.params?.result?.value?.logs;
 
-      /*if (Array.isArray(rawLog)) {
-        console.log(`🧾 [Raw Logs] ${rawLog.join(' | ')} | [Signature] ${signature}`);
-      } else {
-        console.warn('⚠️ No logs found in payload:', payload);
-      }*/
-
       if (!signature || !mentionedWallet) return;
 
+      const alias = this.walletLabels.get(mentionedWallet) || mentionedWallet;
       const isAlpha = this.trackedWallets.includes(mentionedWallet);
       const isKeepAlive = this.keepAliveWallets.includes(mentionedWallet);
 
       if (isAlpha) {
         this.telemetry.signalsReceived++;
         this.telemetry.lastSignalTime = Date.now();
-        
+
         if (Array.isArray(rawLog)) {
-          console.log(`📩 [Alpha Logs] ${rawLog.join(' | ')} | ✏[Signature] ${signature}`);
+          console.log(`📩 [Alpha Logs] ${rawLog.join(' | ')} | ✏[Signature] ${signature} | 🧬 [Wallet] ${alias}`);
         } else {
-          console.warn(`⚠️ No logs for alpha wallet ${mentionedWallet}`);
+          console.warn(`⚠️ No logs for alpha wallet ${alias}`);
         }
-        console.log(`🧠 [Alpha] ${mentionedWallet} emitted tx: ${signature}`);
+
+        console.log(`🧠 [Alpha] ${alias} emitted tx: ${signature}`);
         await this.handleSignature(signature, mentionedWallet);
+      } else if (isKeepAlive) {
+        this.telemetry.keepAliveHits++;
+        console.log(`⚙️ [KeepAlive] Activity from ${mentionedWallet}: ${signature}`);
       }
     });
 
@@ -108,8 +107,9 @@ class HeliusClient extends EventEmitter {
   }
 
   async handleSignature(signature, alphaWallet) {
+    const alias = this.walletLabels.get(alphaWallet) || alphaWallet;
     console.log(`🔎 [RPC] Fetching tx for signature: ${signature}`);
-    console.log(`👤 [Alpha Wallet]: ${alphaWallet}`);
+    console.log(`👤 [Alpha Wallet]: ${alias}`);
 
     try {
       const tx = await this.publicRPC.getParsedTransaction(signature, 'processed');
@@ -125,7 +125,7 @@ class HeliusClient extends EventEmitter {
 
       const swapSignal = this.parseSwap(tx);
       if (swapSignal) {
-        swapSignal.alphaWallet = alphaWallet;
+        swapSignal.alphaWallet = alias;
         console.log(`📈 [Signal] ${swapSignal.tokenIn} → ${swapSignal.tokenOut}`);
         console.log(`🚨 [Emit Signal]`, JSON.stringify(swapSignal, null, 2));
         this.emit('tradeSignal', swapSignal);
@@ -175,10 +175,11 @@ class HeliusClient extends EventEmitter {
     return swapSignal.tokenIn && swapSignal.tokenOut ? swapSignal : null;
   }
 
-  async addWallet(address) {
+  async addWallet(address, name = null) {
     if (!this.trackedWallets.includes(address)) {
       this.trackedWallets.push(address);
-      console.log(`➕ [Alpha Tracker Added]: ${address}`);
+      console.log(`➕ [Alpha Tracker Added]: ${name || address}`);
+      if (name) this.walletLabels.set(address, name);
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         this.subscribeToWallet(address);
       }
@@ -207,12 +208,25 @@ class HeliusClient extends EventEmitter {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
     }
-
+    this.subscriptions.clear();
     console.log('🛑 [HeliusClient] Stopped');
   }
-
   getTrackedWallets() {
-    return this.trackedWallets;
+    return this.trackedWallets.map(address => ({
+      address,
+      name: this.walletLabels.get(address) || null
+    }));
+  }
+  getWalletLabel(address) {
+    return this.walletLabels.get(address) || null;
+  }
+
+  listSubscriptions() {
+    return Array.from(this.subscriptions.entries()).map(([wallet, subId]) => ({
+      wallet,
+      alias: this.walletLabels.get(wallet) || wallet,
+      subscriptionId: subId
+    }));
   }
 }
 
