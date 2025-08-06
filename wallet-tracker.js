@@ -74,3 +74,5 @@ class WalletTracker extends EventEmitter {
     }));
   }
 }
+
+module.exports = WalletTracker;
