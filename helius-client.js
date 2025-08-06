@@ -25,16 +25,20 @@ class HeliusClient extends EventEmitter {
     this.ws.on('open', () => {
       console.log('✅ [WS] Connected to Helius');
 
-      this.trackedWallets.forEach((wallet, i) => {
+      if (this.trackedWallets.length > 0) {
         const subscription = {
           jsonrpc: '2.0',
-          id: Date.now() + i,
+          id: Date.now(),
           method: 'logsSubscribe',
-          params: [{ mentions: [wallet] }, { commitment: 'processed' }]
+          params: [{ mentions: this.trackedWallets }, { commitment: 'processed' }]
         };
         this.ws.send(JSON.stringify(subscription));
-        console.log(`📡 [WS] Subscribed to wallet: ${wallet}`);
-      });
+        console.log(`📡 [WS] Batched subscription for ${this.trackedWallets.length} wallets`);
+      } else {
+        console.log('⚠️ [WS] No wallets to track');
+      }
+
+      this.backoff = 0; // Reset backoff on success
     });
 
     this.ws.on('message', async (message) => {
@@ -48,7 +52,8 @@ class HeliusClient extends EventEmitter {
 
     this.ws.on('close', () => {
       console.warn('⚠️ [WS] Connection closed. Reconnecting...');
-      setTimeout(() => this.start(), Math.min(10000, (this.backoff += 1000)));
+      this.backoff = Math.min(this.backoff + 1000, 30000); // exponential backoff capped at 30s
+      setTimeout(() => this.start(), this.backoff);
     });
 
     this.ws.on('error', (error) => {
@@ -92,7 +97,7 @@ class HeliusClient extends EventEmitter {
       protocol: null,
       tokenIn: null,
       tokenOut: null,
-      tokenSymbol: null // optional, fetched by other modules if needed
+      tokenSymbol: null
     };
 
     for (const ix of instructions) {
