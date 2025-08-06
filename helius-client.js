@@ -31,34 +31,58 @@ class HeliusClient {
     this.lastRequestTime = Date.now();
   }
 
+  /**
+   * ✅ FIXED: Uses current /addresses/{address}/transactions GET endpoint
+   * 🧠 Includes fallback POST if GET fails
+   */
   async getTransactions(address, beforeSignature = null, limit = 10) {
     console.log(`📡 [getTransactions] Fetching txs for ${address}`);
     await this.waitForRateLimit();
 
-    const endpoint = `${this.baseURL}/transactions?api-key=${this.apiKey}`;
-    const body = {
-      accounts: [address],
+    const getEndpoint = `${this.baseURL}/addresses/${address}/transactions`;
+    const getParams = {
+      'api-key': this.apiKey,
       limit,
     };
-    if (beforeSignature) body.before = beforeSignature;
-
-    console.log(`🔍 [getTransactions] POST to: ${endpoint}`);
-    console.log(`📦 Payload:`, JSON.stringify(body, null, 2));
+    if (beforeSignature) {
+      getParams.before = beforeSignature;
+    }
 
     try {
-      const response = await axios.post(endpoint, body, {
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      console.log(`✅ [getTransactions] Retrieved ${response.data.length} txs`);
+      console.log(`🔍 [GET] ${getEndpoint}`);
+      console.log(`📦 Params:`, JSON.stringify(getParams, null, 2));
+      const response = await axios.get(getEndpoint, { params: getParams });
+      console.log(`✅ [GET] Retrieved ${response.data.length} txs`);
       return response.data;
-    } catch (error) {
-      console.error(`❌ [getTransactions] Failed for ${address}`);
-      console.error(`🧾 Raw error:`, error.response?.data || error.message);
-      return [];
+    } catch (getError) {
+      console.warn(`⚠️ [GET] Failed: ${getError.response?.data?.error?.message || getError.message}`);
+      console.log(`🔁 Trying fallback POST...`);
+
+      const postEndpoint = `${this.baseURL}/transactions?api-key=${this.apiKey}`;
+      const postPayload = {
+        accounts: [address],
+        limit,
+      };
+      if (beforeSignature) {
+        postPayload.before = beforeSignature;
+      }
+
+      try {
+        console.log(`🔍 [POST] ${postEndpoint}`);
+        console.log(`📦 Payload:`, JSON.stringify(postPayload, null, 2));
+        const postResponse = await axios.post(postEndpoint, postPayload, {
+          headers: { 'Content-Type': 'application/json' },
+        });
+        console.log(`✅ [POST] Retrieved ${postResponse.data.length} txs`);
+        return postResponse.data;
+      } catch (postError) {
+        console.error(`❌ [POST] Failed: ${postError.response?.data?.error?.message || postError.message}`);
+        return [];
+      }
     }
   }
 
+  // 🔄 Everything below remains unchanged
   async getTokenAccounts(address) {
     console.log(`📡 [getTokenAccounts] Fetching for ${address}`);
     await this.waitForRateLimit();
