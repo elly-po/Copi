@@ -1,189 +1,139 @@
 require('dotenv').config();
-const axios = require('axios');
+const EventEmitter = require('events');
+const WebSocket = require('ws');
+const { Connection } = require('@solana/web3.js');
 
-class HeliusClient {
-  constructor() {
-    this.apiKey = process.env.HELIUS_API_KEY;
-    if (!this.apiKey) {
-      throw new Error('❌ HELIUS_API_KEY is missing. Please set it in your environment.');
-    }
+class HeliusClient extends EventEmitter {
+  constructor(wallets = []) {
+    super();
 
-    this.baseURL = 'https://api.helius.xyz/v1';
-    this.primaryRPC = 'https://api.mainnet-beta.solana.com'; // Solana default
-    this.fallbackRPC = `https://mainnet.helius.rpcpool.com/?api-key=${this.apiKey}`; // Helius fallback
-
-    this.lastRequestTime = 0;
-    this.rateLimitDelay = parseInt(process.env.RATE_LIMIT_DELAY) || 5000;
+    this.trackedWallets = wallets;
+    this.wsURL = `wss://rpc.helius.xyz/?api-key=${process.env.HELIUS_API_KEY}`;
+    this.publicRPC = new Connection('https://api.mainnet-beta.solana.com');
+    this.ws = null;
+    this.backoff = 0;
 
     console.log('🧠 [HeliusClient] Initialized');
-    console.log(`🔑 API Key loaded: ${this.apiKey?.slice(0, 6)}...`);
-    console.log('🔗 Primary RPC:', this.primaryRPC);
-    console.log('🔗 Fallback RPC:', this.fallbackRPC);
+    console.log(`🔗 WS Endpoint: ${this.wsURL}`);
+    console.log(`🔗 Public RPC: ${this.publicRPC._rpcEndpoint}`);
   }
 
-  async waitForRateLimit() {
-    const now = Date.now();
-    const timeSinceLastRequest = now - this.lastRequestTime;
-    if (timeSinceLastRequest < this.rateLimitDelay) {
-      const waitTime = this.rateLimitDelay - timeSinceLastRequest;
-      console.log(`⏳ [RateLimit] Waiting ${waitTime}ms`);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-    }
-    this.lastRequestTime = Date.now();
+  async start() {
+    console.log('🚀 [HeliusClient] Starting WebSocket listener...');
+    this.ws = new WebSocket(this.wsURL);
+
+    this.ws.on('open', () => {
+      console.log('✅ [WS] Connected to Helius');
+
+      this.trackedWallets.forEach((wallet, i) => {
+        const subscription = {
+          jsonrpc: '2.0',
+          id: Date.now() + i,
+          method: 'logsSubscribe',
+          params: [{ mentions: [wallet] }, { commitment: 'processed' }]
+        };
+        this.ws.send(JSON.stringify(subscription));
+        console.log(`📡 [WS] Subscribed to wallet: ${wallet}`);
+      });
+    });
+
+    this.ws.on('message', async (message) => {
+      const payload = JSON.parse(message);
+      const signature = payload?.params?.result?.value?.signature;
+      if (!signature) return;
+
+      console.log(`🧠 [WS] Tx signature received: ${signature}`);
+      await this.handleSignature(signature);
+    });
+
+    this.ws.on('close', () => {
+      console.warn('⚠️ [WS] Connection closed. Reconnecting...');
+      setTimeout(() => this.start(), Math.min(10000, (this.backoff += 1000)));
+    });
+
+    this.ws.on('error', (error) => {
+      console.error('❌ [WS] Error:', error.message);
+    });
   }
 
-  async postRPC(url, payload) {
+  async handleSignature(signature) {
+    console.log(`🔎 [RPC] Fetching transaction for ${signature}`);
     try {
-      return await axios.post(url, payload);
-    } catch (error) {
-      console.warn(`⚠️ RPC Failed: ${error.message}`);
-      return null;
-    }
-  }
+      const tx = await this.publicRPC.getParsedTransaction(signature, 'processed');
 
-  async getTokenAccounts(address) {
-    console.log(`📡 [getTokenAccounts] Fetching for ${address}`);
-    await this.waitForRateLimit();
-
-    const payload = {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'getTokenAccountsByOwner',
-      params: [
-        address,
-        { programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' },
-        { encoding: 'jsonParsed' }
-      ]
-    };
-
-    console.log(`🔍 [Solana RPC] Attempting primary RPC`);
-    let response = await this.postRPC(this.primaryRPC, payload);
-
-    if (!response || !response.data.result) {
-      console.log(`🔁 [Fallback] Trying Helius RPC`);
-      response = await this.postRPC(this.fallbackRPC, payload);
-    }
-
-    const accounts = response?.data?.result?.value || [];
-    console.log(`✅ Found ${accounts.length} token accounts`);
-    return accounts;
-  }
-
-  async getTransactions(address, beforeSignature = null, limit = 10) {
-    console.log(`📡 [getTransactions] Fetching txs for ${address}`);
-    await this.waitForRateLimit();
-
-    const getEndpoint = `${this.baseURL}/addresses/${address}/transactions`;
-    const getParams = {
-      'api-key': this.apiKey,
-      limit,
-    };
-    if (beforeSignature) getParams.before = beforeSignature;
-
-    try {
-      const response = await axios.get(getEndpoint, { params: getParams });
-      console.log(`✅ [GET] Retrieved ${response.data.length} txs`);
-      return response.data;
-    } catch (getError) {
-      console.warn(`⚠️ [GET] Failed: ${getError.message}`);
-      console.log(`🔁 Trying fallback POST...`);
-
-      const postEndpoint = `${this.baseURL}/transactions?api-key=${this.apiKey}`;
-      const postPayload = { accounts: [address], limit };
-      if (beforeSignature) postPayload.before = beforeSignature;
-
-      try {
-        const postResponse = await axios.post(postEndpoint, postPayload, {
-          headers: { 'Content-Type': 'application/json' }
-        });
-        console.log(`✅ [POST] Retrieved ${postResponse.data.length} txs`);
-        return postResponse.data;
-      } catch (postError) {
-        console.error(`❌ [POST] Failed: ${postError.message}`);
-        return [];
+      if (!tx || !tx.transaction) {
+        console.warn(`⚠️ [RPC] Transaction not found: ${signature}`);
+        return;
       }
+
+      const swapSignal = this.parseSwap(tx);
+      if (swapSignal) {
+        console.log(`📈 [Signal] Swap detected: ${swapSignal.tokenIn} → ${swapSignal.tokenOut}`);
+        this.emit('tradeSignal', swapSignal);
+      } else {
+        console.log(`🔕 [Signal] No swap intent found in ${signature}`);
+      }
+    } catch (err) {
+      console.error(`❌ [RPC] Error fetching transaction:`, err.message);
     }
   }
 
-  async getTokenMetadata(tokenAddress) {
-    await this.waitForRateLimit();
-    const url = `${this.baseURL}/tokens/metadata`;
-    const params = { addresses: [tokenAddress], 'api-key': this.apiKey };
-
-    try {
-      const response = await axios.get(url, { params });
-      const metadata = response.data[0] || null;
-      if (metadata) console.log(`✅ Symbol=${metadata.symbol}`);
-      else console.log(`⚠️ No metadata found`);
-      return metadata;
-    } catch (error) {
-      console.error(`❌ [getTokenMetadata] Error: ${error.message}`);
+  parseSwap(tx) {
+    console.log('🧪 [Parser] Parsing swap intent...');
+    const instructions = tx?.transaction?.message?.instructions || [];
+    if (!instructions.length) {
+      console.log('⚠️ [Parser] No instructions found');
       return null;
     }
-  }
 
-  async getTokenPrice(tokenAddress) {
-    await this.waitForRateLimit();
-    const url = `https://price.jup.ag/v4/price?ids=${tokenAddress}`;
-    try {
-      const response = await axios.get(url);
-      const priceData = response.data.data[tokenAddress] || null;
-      if (priceData) console.log(`💰 Price: $${priceData.price}`);
-      else console.log(`⚠️ No price data`);
-      return priceData;
-    } catch (error) {
-      console.error(`❌ [getTokenPrice] Error: ${error.message}`);
-      return null;
-    }
-  }
-
-  parseSwapTransaction(transaction) {
-    const swapData = {
-      signature: transaction.signature,
+    const swapSignal = {
+      signature: tx.transaction.signatures[0],
+      timestamp: tx.blockTime || Date.now(),
       protocol: null,
       tokenIn: null,
       tokenOut: null,
-      amountIn: 0,
-      amountOut: 0,
-      timestamp: transaction.timestamp
+      tokenSymbol: null // optional, fetched by other modules if needed
     };
 
-    const instructions = transaction.instructions || [];
-    for (const instruction of instructions) {
-      const program = instruction.programId;
-      const accounts = instruction.accounts || [];
+    for (const ix of instructions) {
+      const program = ix.programId?.toBase58?.();
+      const accounts = ix.accounts?.map(a => a.toBase58?.()) || [];
 
       if (program === 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4') {
-        swapData.protocol = 'Jupiter';
+        swapSignal.protocol = 'Jupiter';
       } else if (program === '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM') {
-        swapData.protocol = 'Raydium';
+        swapSignal.protocol = 'Raydium';
       } else if (program === 'EhpHV7B2r4F4zHF2qNpANKKLNEtCT6Z6LNHNz8Xr8kLJ') {
-        swapData.protocol = 'Orca';
-      } else {
-        continue;
+        swapSignal.protocol = 'Orca';
       }
 
       if (accounts.length >= 4) {
-        swapData.tokenIn = accounts[2];
-        swapData.tokenOut = accounts[3];
+        swapSignal.tokenIn = accounts[2];
+        swapSignal.tokenOut = accounts[3];
+        console.log(`✅ [Parser] Protocol=${swapSignal.protocol}, tokenIn=${swapSignal.tokenIn}, tokenOut=${swapSignal.tokenOut}`);
+        break;
       }
     }
 
-    return swapData.tokenIn && swapData.tokenOut ? swapData : null;
+    return swapSignal.tokenIn && swapSignal.tokenOut ? swapSignal : null;
   }
 
-  async getRecentSwaps(walletAddress, limit = 5) {
-    const transactions = await this.getTransactions(walletAddress, null, limit * 3);
-    const swaps = [];
-
-    for (const tx of transactions) {
-      const swapData = this.parseSwapTransaction(tx);
-      if (swapData) swaps.push(swapData);
-      if (swaps.length >= limit) break;
+  async addWallet(address) {
+    if (!this.trackedWallets.includes(address)) {
+      this.trackedWallets.push(address);
+      console.log(`➕ [Tracker] Wallet added: ${address}`);
     }
+  }
 
-    console.log(`✅ Found ${swaps.length} swap(s)`);
-    return swaps;
+  async stop() {
+    if (this.ws) {
+      console.log('🛑 [HeliusClient] Closing WebSocket...');
+      this.ws.close();
+    }
+  }
+
+  getTrackedWallets() {
+    return this.trackedWallets;
   }
 }
 
