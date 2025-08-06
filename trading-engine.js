@@ -7,10 +7,7 @@ class TradingEngine extends EventEmitter {
   constructor() {
     super();
     console.log('[Init] Creating new TradingEngine instance');
-    this.connection = new Connection(
-      `${process.env.HELIUS_RPC_URL}${process.env.HELIUS_API_KEY}`,
-      'confirmed'
-    );
+    this.connection = new Connection(`https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}`, 'confirmed');
     console.log('[Init] Solana connection established');
     this.db = Database;
     this.activeUsers = new Map();
