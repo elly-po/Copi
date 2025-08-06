@@ -12,6 +12,11 @@ class HeliusClient extends EventEmitter {
     this.publicRPC = new Connection('https://api.mainnet-beta.solana.com');
     this.ws = null;
     this.backoff = 0;
+    this.heartbeatInterval = null;
+    this.telemetry = {
+      signalsReceived: 0,
+      lastSignalTime: null
+    };
 
     console.log('🧠 [HeliusClient] Initialized');
     console.log(`🔗 WS Endpoint: ${this.wsURL}`);
@@ -39,6 +44,13 @@ class HeliusClient extends EventEmitter {
       }
 
       this.backoff = 0;
+
+      this.heartbeatInterval = setInterval(() => {
+        const lastSeen = this.telemetry.lastSignalTime
+          ? new Date(this.telemetry.lastSignalTime).toLocaleTimeString()
+          : 'None';
+        console.log(`🟢 [Heartbeat] Wallets=${this.trackedWallets.length}, Signals=${this.telemetry.signalsReceived}, LastSignal=${lastSeen}`);
+      }, 30000);
     });
 
     this.ws.on('message', async (message) => {
@@ -48,6 +60,9 @@ class HeliusClient extends EventEmitter {
 
       if (!signature || !mentionedWallet) return;
 
+      this.telemetry.signalsReceived++;
+      this.telemetry.lastSignalTime = Date.now();
+
       console.log(`🧠 [WS] Tx signature received: ${signature}`);
       console.log(`👤 [Alpha Wallet Triggered] ${mentionedWallet}`);
       await this.handleSignature(signature, mentionedWallet);
@@ -55,6 +70,7 @@ class HeliusClient extends EventEmitter {
 
     this.ws.on('close', () => {
       console.warn('⚠️ [WS] Connection closed. Reconnecting...');
+      if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
       this.backoff = Math.min(this.backoff + 1000, 30000);
       setTimeout(() => this.start(), this.backoff);
     });
@@ -140,7 +156,6 @@ class HeliusClient extends EventEmitter {
     if (!this.trackedWallets.includes(address)) {
       this.trackedWallets.push(address);
       console.log(`➕ [Tracker] Wallet added: ${address}`);
-      // Optional dynamic resubscription can be added here
     }
   }
 
@@ -149,6 +164,13 @@ class HeliusClient extends EventEmitter {
       console.log('🛑 [HeliusClient] Closing WebSocket...');
       this.ws.close();
     }
+
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+
+    console.log('🛑 [HeliusClient] Stopped');
   }
 
   getTrackedWallets() {
