@@ -8,13 +8,21 @@ class HeliusClient extends EventEmitter {
     super();
 
     this.trackedWallets = wallets;
+
+    // ✅ Hardcoded high-churn wallet for keepalive activity
+    this.keepAliveWallets = [
+      'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4' // Jupiter Router
+    ];
+
     this.wsURL = `wss://rpc.helius.xyz/?api-key=${process.env.HELIUS_API_KEY}`;
     this.publicRPC = new Connection('https://api.mainnet-beta.solana.com');
     this.ws = null;
     this.backoff = 0;
     this.heartbeatInterval = null;
+
     this.telemetry = {
       signalsReceived: 0,
+      keepAliveHits: 0,
       lastSignalTime: null
     };
 
@@ -30,18 +38,21 @@ class HeliusClient extends EventEmitter {
     this.ws.on('open', () => {
       console.log('✅ [WS] Connected to Helius');
 
-      if (this.trackedWallets.length > 0) {
-        const subscription = {
-          jsonrpc: '2.0',
-          id: Date.now(),
-          method: 'logsSubscribe',
-          params: [{ mentions: this.trackedWallets }, { commitment: 'processed' }]
-        };
-        this.ws.send(JSON.stringify(subscription));
-        console.log(`📡 [WS] Batched subscription for ${this.trackedWallets.length} wallets`);
-      } else {
-        console.log('⚠️ [WS] No wallets to track');
+      const allWallets = [...this.trackedWallets, ...this.keepAliveWallets];
+      if (allWallets.length === 0) {
+        console.log('⚠️ [WS] No wallets to subscribe');
+        return;
       }
+
+      const subscription = {
+        jsonrpc: '2.0',
+        id: Date.now(),
+        method: 'logsSubscribe',
+        params: [{ mentions: allWallets }, { commitment: 'processed' }]
+      };
+
+      this.ws.send(JSON.stringify(subscription));
+      console.log(`📡 [WS] Subscribed to ${allWallets.length} wallets`);
 
       this.backoff = 0;
 
@@ -49,7 +60,7 @@ class HeliusClient extends EventEmitter {
         const lastSeen = this.telemetry.lastSignalTime
           ? new Date(this.telemetry.lastSignalTime).toLocaleTimeString()
           : 'None';
-        console.log(`🟢 [Heartbeat] Wallets=${this.trackedWallets.length}, Signals=${this.telemetry.signalsReceived}, LastSignal=${lastSeen}`);
+        console.log(`🟢 [Heartbeat] Alpha=${this.trackedWallets.length}, KeepAlive=${this.keepAliveWallets.length}, Signals=${this.telemetry.signalsReceived}, KeepAliveHits=${this.telemetry.keepAliveHits}, LastSignal=${lastSeen}`);
       }, 300000);
     });
 
@@ -60,12 +71,18 @@ class HeliusClient extends EventEmitter {
 
       if (!signature || !mentionedWallet) return;
 
-      this.telemetry.signalsReceived++;
-      this.telemetry.lastSignalTime = Date.now();
+      const isAlpha = this.trackedWallets.includes(mentionedWallet);
+      const isKeepAlive = this.keepAliveWallets.includes(mentionedWallet);
 
-      console.log(`🧠 [WS] Tx signature received: ${signature}`);
-      console.log(`👤 [Alpha Wallet Triggered] ${mentionedWallet}`);
-      await this.handleSignature(signature, mentionedWallet);
+      if (isAlpha) {
+        this.telemetry.signalsReceived++;
+        this.telemetry.lastSignalTime = Date.now();
+        console.log(`🧠 [Alpha] ${mentionedWallet} emitted tx: ${signature}`);
+        await this.handleSignature(signature, mentionedWallet);
+      } else if (isKeepAlive) {
+        this.telemetry.keepAliveHits++;
+        console.log(`⚙️ [KeepAlive] Activity from ${mentionedWallet}: ${signature}`);
+      }
     });
 
     this.ws.on('close', () => {
@@ -75,50 +92,51 @@ class HeliusClient extends EventEmitter {
       setTimeout(() => this.start(), this.backoff);
     });
 
-    this.ws.on('error', (error) => {
-      console.error('❌ [WS] Error:', error.message);
+    this.ws.on('error', (err) => {
+      console.error('❌ [WS] Error:', err.message);
     });
   }
 
   async handleSignature(signature, alphaWallet) {
-    console.log(`🔎 [RPC] Fetching transaction for signature: ${signature}`);
+    console.log(`🔎 [RPC] Fetching tx for signature: ${signature}`);
     console.log(`👤 [Alpha Wallet]: ${alphaWallet}`);
+
     try {
       const tx = await this.publicRPC.getParsedTransaction(signature, 'processed');
 
       if (!tx || !tx.transaction) {
-        console.warn(`⚠️ [RPC] Transaction not found: ${signature}`);
+        console.warn(`⚠️ [RPC] No transaction found`);
         return;
       }
 
       console.log(`📄 [RPC] Parsed Transaction: ${JSON.stringify(tx.transaction.message, null, 2)}`);
-      console.log(`📊 [RPC] Account Keys: ${tx.transaction.message.accountKeys.map(k => k.pubkey.toBase58())}`);
+      console.log(`📊 [AccountKeys]:`, tx.transaction.message.accountKeys.map(k => k.pubkey.toBase58()));
       console.log(`🕓 [BlockTime]: ${tx.blockTime}`);
       console.log(`📋 [Instruction Count]: ${tx.transaction.message.instructions.length}`);
 
       const swapSignal = this.parseSwap(tx);
       if (swapSignal) {
         swapSignal.alphaWallet = alphaWallet;
-        console.log(`📈 [Signal] Swap detected! ${swapSignal.tokenIn} → ${swapSignal.tokenOut}`);
-        console.log(`🚨 [Emitting Signal]`, JSON.stringify(swapSignal, null, 2));
+        console.log(`📈 [Signal] ${swapSignal.tokenIn} → ${swapSignal.tokenOut}`);
+        console.log(`🚨 [Emit Signal]`, JSON.stringify(swapSignal, null, 2));
         this.emit('tradeSignal', swapSignal);
       } else {
-        console.log(`🔕 [Signal] No swap intent found in ${signature}`);
+        console.log(`🔕 [No swap detected]`);
       }
     } catch (err) {
-      console.error(`❌ [RPC] Error fetching transaction:`, err.message);
+      console.error(`❌ [RPC Error]:`, err.message);
     }
   }
 
   parseSwap(tx) {
-    console.log('🧪 [Parser] Parsing swap intent...');
+    console.log('🧪 [Parser] Scanning instructions...');
     const instructions = tx?.transaction?.message?.instructions || [];
     if (!instructions.length) {
-      console.log('⚠️ [Parser] No instructions found');
+      console.log('⚠️ [Parser] No instructions');
       return null;
     }
 
-    console.log('📦 [Raw Instructions]:', JSON.stringify(instructions, null, 2));
+    console.log('📦 [Raw Instructions]', JSON.stringify(instructions, null, 2));
 
     const swapSignal = {
       signature: tx.transaction.signatures[0],
@@ -133,18 +151,14 @@ class HeliusClient extends EventEmitter {
       const program = ix.programId?.toBase58?.();
       const accounts = ix.accounts?.map(a => a.toBase58?.()) || [];
 
-      if (program === 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4') {
-        swapSignal.protocol = 'Jupiter';
-      } else if (program === '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM') {
-        swapSignal.protocol = 'Raydium';
-      } else if (program === 'EhpHV7B2r4F4zHF2qNpANKKLNEtCT6Z6LNHNz8Xr8kLJ') {
-        swapSignal.protocol = 'Orca';
-      }
+      if (program === 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4') swapSignal.protocol = 'Jupiter';
+      else if (program === '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM') swapSignal.protocol = 'Raydium';
+      else if (program === 'EhpHV7B2r4F4zHF2qNpANKKLNEtCT6Z6LNHNz8Xr8kLJ') swapSignal.protocol = 'Orca';
 
       if (accounts.length >= 4) {
         swapSignal.tokenIn = accounts[2];
         swapSignal.tokenOut = accounts[3];
-        console.log(`✅ [Parser] Detected protocol=${swapSignal.protocol}, tokenIn=${swapSignal.tokenIn}, tokenOut=${swapSignal.tokenOut}`);
+        console.log(`✅ [Detected] Protocol=${swapSignal.protocol}, In=${swapSignal.tokenIn}, Out=${swapSignal.tokenOut}`);
         break;
       }
     }
@@ -155,13 +169,13 @@ class HeliusClient extends EventEmitter {
   async addWallet(address) {
     if (!this.trackedWallets.includes(address)) {
       this.trackedWallets.push(address);
-      console.log(`➕ [Tracker] Wallet added: ${address}`);
+      console.log(`➕ [Alpha Tracker Added]: ${address}`);
     }
   }
 
   async stop() {
     if (this.ws) {
-      console.log('🛑 [HeliusClient] Closing WebSocket...');
+      console.log('🛑 [WS] Closing...');
       this.ws.close();
     }
 
