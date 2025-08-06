@@ -8,10 +8,8 @@ class HeliusClient extends EventEmitter {
     super();
 
     this.trackedWallets = wallets;
-
-    // ✅ Hardcoded high-churn wallet for keepalive activity
     this.keepAliveWallets = [
-      'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4' // Jupiter Router
+      'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4' // High-traffic wallet
     ];
 
     this.wsURL = `wss://rpc.helius.xyz/?api-key=${process.env.HELIUS_API_KEY}`;
@@ -19,6 +17,7 @@ class HeliusClient extends EventEmitter {
     this.ws = null;
     this.backoff = 0;
     this.heartbeatInterval = null;
+    this.subscriptions = new Map();
 
     this.telemetry = {
       signalsReceived: 0,
@@ -28,7 +27,6 @@ class HeliusClient extends EventEmitter {
 
     console.log('🧠 [HeliusClient] Initialized');
     console.log(`🔗 WS Endpoint: ${this.wsURL}`);
-    console.log(`🔗 Public RPC: ${this.publicRPC._rpcEndpoint}`);
   }
 
   async start() {
@@ -38,22 +36,7 @@ class HeliusClient extends EventEmitter {
     this.ws.on('open', () => {
       console.log('✅ [WS] Connected to Helius');
 
-      const allWallets = [...this.trackedWallets, ...this.keepAliveWallets];
-      if (allWallets.length === 0) {
-        console.log('⚠️ [WS] No wallets to subscribe');
-        return;
-      }
-
-      const subscription = {
-        jsonrpc: '2.0',
-        id: Date.now(),
-        method: 'logsSubscribe',
-        params: [{ mentions: allWallets }, { commitment: 'processed' }]
-      };
-
-      this.ws.send(JSON.stringify(subscription));
-      console.log(`📡 [WS] Subscribed to ${allWallets.length} wallets`);
-
+      this.subscribeToWallets();
       this.backoff = 0;
 
       this.heartbeatInterval = setInterval(() => {
@@ -69,9 +52,9 @@ class HeliusClient extends EventEmitter {
       const signature = payload?.params?.result?.value?.signature;
       const mentionedWallet = payload?.params?.result?.value?.mentions?.[0];
       const rawLog = payload?.params?.result?.value?.logs;
-      
+
       if (Array.isArray(rawLog)) {
-        console.log(`🧾 [Raw Logs] ${rawLog.join(' | ')} | [signature] ${signature}`);
+        console.log(`🧾 [Raw Logs] ${rawLog.join(' | ')} | [Signature] ${signature}`);
       } else {
         console.warn('⚠️ No logs found in payload:', payload);
       }
@@ -104,13 +87,29 @@ class HeliusClient extends EventEmitter {
     });
   }
 
+  subscribeToWallets() {
+    const allWallets = [...this.trackedWallets, ...this.keepAliveWallets];
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+    for (const wallet of allWallets) {
+      const msg = {
+        jsonrpc: '2.0',
+        id: `${wallet}_${Date.now()}`,
+        method: 'logsSubscribe',
+        params: [{ mentions: [wallet] }, { commitment: 'processed' }]
+      };
+      this.ws.send(JSON.stringify(msg));
+      this.subscriptions.set(wallet, msg.id);
+      console.log(`📡 [Subscribed] ${wallet}`);
+    }
+  }
+
   async handleSignature(signature, alphaWallet) {
     console.log(`🔎 [RPC] Fetching tx for signature: ${signature}`);
     console.log(`👤 [Alpha Wallet]: ${alphaWallet}`);
 
     try {
       const tx = await this.publicRPC.getParsedTransaction(signature, 'processed');
-
       if (!tx || !tx.transaction) {
         console.warn(`⚠️ [RPC] No transaction found`);
         return;
@@ -177,7 +176,22 @@ class HeliusClient extends EventEmitter {
     if (!this.trackedWallets.includes(address)) {
       this.trackedWallets.push(address);
       console.log(`➕ [Alpha Tracker Added]: ${address}`);
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.subscribeToWallet(address);
+      }
     }
+  }
+
+  subscribeToWallet(wallet) {
+    const msg = {
+      jsonrpc: '2.0',
+      id: `${wallet}_${Date.now()}`,
+      method: 'logsSubscribe',
+      params: [{ mentions: [wallet] }, { commitment: 'processed' }]
+    };
+    this.ws.send(JSON.stringify(msg));
+    this.subscriptions.set(wallet, msg.id);
+    console.log(`📡 [Subscribed] ${wallet}`);
   }
 
   async stop() {
