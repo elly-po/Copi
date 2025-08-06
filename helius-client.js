@@ -4,7 +4,7 @@ class HeliusClient {
   constructor() {
     this.apiKey = process.env.HELIUS_API_KEY;
     this.baseURL = 'https://api.helius.xyz/v1';
-    this.rpcURL = `https://mainnet.helius.rpcpool.com/?api-key=${this.apiKey}`;
+    this.rpcURL = 'https://api.mainnet-beta.solana.com'; //`https://mainnet.helius.rpcpool.com/?api-key=${this.apiKey}`;
     this.lastRequestTime = 0;
     this.rateLimitDelay = parseInt(process.env.RATE_LIMIT_DELAY) || 1000;
     console.log('🧠 [HeliusClient] Initialized with baseURL:', this.baseURL);
