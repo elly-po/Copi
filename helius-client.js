@@ -50,7 +50,7 @@ class HeliusClient extends EventEmitter {
           ? new Date(this.telemetry.lastSignalTime).toLocaleTimeString()
           : 'None';
         console.log(`🟢 [Heartbeat] Wallets=${this.trackedWallets.length}, Signals=${this.telemetry.signalsReceived}, LastSignal=${lastSeen}`);
-      }, 30000);
+      }, 300000);
     });
 
     this.ws.on('message', async (message) => {
