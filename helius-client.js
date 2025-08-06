@@ -3,7 +3,7 @@ const axios = require('axios');
 class HeliusClient {
   constructor() {
     this.apiKey = process.env.HELIUS_API_KEY;
-    this.baseURL = 'https://api.helius.xyz/v0';
+    this.baseURL = 'https://api.helius.xyz/v1';
     this.rpcURL = `${process.env.HELIUS_RPC_URL}${this.apiKey}`;
     this.lastRequestTime = 0;
     this.rateLimitDelay = parseInt(process.env.RATE_LIMIT_DELAY) || 1000;
@@ -23,33 +23,38 @@ class HeliusClient {
     this.lastRequestTime = Date.now();
   }
 
+  /**
+   * ✅ COMPATIBLE: Uses v1/transactions endpoint without paid-tier filters
+   */
   async getTransactions(address, beforeSignature = null, limit = 10) {
-    console.log(`📡 [getTransactions] Fetching txs for ${address} | before: ${beforeSignature} | limit: ${limit}`);
+    console.log(`📡 [getTransactions] Fetching ALL txs for ${address} | before: ${beforeSignature} | limit: ${limit}`);
     await this.waitForRateLimit();
 
     try {
-      const params = {
-        address,
+      const body = {
+        accounts: [address],
         limit,
-        commitment: 'confirmed'
       };
 
       if (beforeSignature) {
-        params.before = beforeSignature;
+        body.before = beforeSignature;
       }
 
-      const response = await axios.get(`${this.baseURL}/addresses/${address}/transactions`, {
-        params: {
-          ...params,
-          'api-key': this.apiKey
+      const response = await axios.post(
+        `${this.baseURL}/transactions?api-key=${this.apiKey}`,
+        body,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+          },
         }
-      });
+      );
 
       console.log(`✅ [getTransactions] Retrieved ${response.data.length} txs for ${address}`);
       return response.data;
     } catch (error) {
-      console.error(`❌ [getTransactions] Error for ${address}:`, error.message);
-      throw error;
+      console.error(`❌ [getTransactions] Failed for ${address}:`, error.response?.data || error.message);
+      return [];
     }
   }
 
@@ -129,36 +134,56 @@ class HeliusClient {
     try {
       const swapData = {
         signature: transaction.signature,
+        protocol: null,           // new: track protocol
         tokenIn: null,
         tokenOut: null,
         amountIn: 0,
         amountOut: 0,
         timestamp: transaction.timestamp
       };
-
+      
       const instructions = transaction.instructions || [];
       console.log(`ℹ️ [parseSwapTransaction] Instructions count: ${instructions.length}`);
-
+      
       for (const instruction of instructions) {
         const program = instruction.programId;
-
-        if (
-          program === 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4' || // Jupiter
-          program === '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM' || // Raydium
-          program === 'EhpHV7B2r4F4zHF2qNpANKKLNEtCT6Z6LNHNz8Xr8kLJ'    // Orca
-        ) {
-          const accounts = instruction.accounts || [];
-          console.log(`🔁 [parseSwapTransaction] Swap detected. Accounts length: ${accounts.length}`);
-
-          if (accounts.length >= 4) {
-            swapData.tokenIn = accounts[2];
-            swapData.tokenOut = accounts[3];
-            console.log(`✅ [parseSwapTransaction] tokenIn=${accounts[2]}, tokenOut=${accounts[3]}`);
-          }
+        
+        // Debug: Log each instruction in full
+        console.log('📦 Instruction:', JSON.stringify(instruction, null, 2));
+        
+        const accounts = instruction.accounts || [];
+        console.log(`🔎 Instruction from program ${program} | Accounts: ${accounts.length}`);
+        
+        // Match known protocols
+        if (program === 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4') {
+          swapData.protocol = 'Jupiter';
+        } else if (program === '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM') {
+          swapData.protocol = 'Raydium';
+        } else if (program === 'EhpHV7B2r4F4zHF2qNpANKKLNEtCT6Z6LNHNz8Xr8kLJ') {
+          swapData.protocol = 'Orca';
+        } else {
+          // Not a known swap program
+          continue;
+        }
+        
+        // Log matched protocol
+        console.log(`🔁 Swap detected via ${swapData.protocol}`);
+        
+        // Safely extract token accounts (you can refine later)
+        if (accounts.length >= 4) {
+          swapData.tokenIn = accounts[2];
+          swapData.tokenOut = accounts[3];
+          console.log(`✅ tokenIn=${accounts[2]}, tokenOut=${accounts[3]}`);
         }
       }
-
-      return swapData;
+      // Final check
+      if (swapData.tokenIn && swapData.tokenOut) {
+        return swapData;
+      } else {
+        console.log(`⚠️ Swap not confirmed – missing token accounts`);
+        return null;
+      }
+    
     } catch (error) {
       console.error(`❌ [parseSwapTransaction] Error:`, error.message);
       return null;
@@ -168,15 +193,17 @@ class HeliusClient {
   async getRecentSwaps(walletAddress, limit = 5) {
     console.log(`📡 [getRecentSwaps] Getting recent swaps for ${walletAddress}`);
     try {
-      const transactions = await this.getTransactions(walletAddress, null, limit);
+      const transactions = await this.getTransactions(walletAddress, null, limit * 3); // Fetch more to filter swaps
       const swaps = [];
 
       for (const tx of transactions) {
         const swapData = this.parseSwapTransaction(tx);
-        if (swapData && swapData.tokenIn && swapData.tokenOut) {
+        if (swapData) {
           swaps.push(swapData);
           console.log(`🔄 [getRecentSwaps] Swap detected: ${swapData.signature}`);
         }
+
+        if (swaps.length >= limit) break;
       }
 
       console.log(`✅ [getRecentSwaps] Found ${swaps.length} swap(s) for ${walletAddress}`);
