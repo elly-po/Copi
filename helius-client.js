@@ -44,15 +44,17 @@ class HeliusClient extends EventEmitter {
     this.ws.on('message', async (message) => {
       const payload = JSON.parse(message);
       const signature = payload?.params?.result?.value?.signature;
-      if (!signature) return;
+      const mentionedWallet = payload?.params?.result?.value?.mentions?.[0];
+
+      if (!signature || !mentionedWallet) return;
 
       console.log(`🧠 [WS] Tx signature received: ${signature}`);
-      await this.handleSignature(signature);
+      await this.handleSignature(signature, mentionedWallet);
     });
 
     this.ws.on('close', () => {
       console.warn('⚠️ [WS] Connection closed. Reconnecting...');
-      this.backoff = Math.min(this.backoff + 1000, 30000); // exponential backoff capped at 30s
+      this.backoff = Math.min(this.backoff + 1000, 30000);
       setTimeout(() => this.start(), this.backoff);
     });
 
@@ -61,7 +63,7 @@ class HeliusClient extends EventEmitter {
     });
   }
 
-  async handleSignature(signature) {
+  async handleSignature(signature, alphaWallet) {
     console.log(`🔎 [RPC] Fetching transaction for ${signature}`);
     try {
       const tx = await this.publicRPC.getParsedTransaction(signature, 'processed');
@@ -73,6 +75,7 @@ class HeliusClient extends EventEmitter {
 
       const swapSignal = this.parseSwap(tx);
       if (swapSignal) {
+        swapSignal.alphaWallet = alphaWallet;
         console.log(`📈 [Signal] Swap detected: ${swapSignal.tokenIn} → ${swapSignal.tokenOut}`);
         this.emit('tradeSignal', swapSignal);
       } else {
@@ -127,6 +130,7 @@ class HeliusClient extends EventEmitter {
     if (!this.trackedWallets.includes(address)) {
       this.trackedWallets.push(address);
       console.log(`➕ [Tracker] Wallet added: ${address}`);
+      // Optional: re-subscribe dynamically here if needed
     }
   }
 
