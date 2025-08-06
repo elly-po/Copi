@@ -24,7 +24,7 @@ class HeliusClient {
   }
 
   /**
-   * ✅ NEW: Uses v1/transactions endpoint to fetch filtered SWAP transactions
+   * ✅ Uses correct endpoint for fetching SWAP transactions
    */
   async getTransactions(address, beforeSignature = null, limit = 10) {
     console.log(`📡 [getTransactions] Fetching SWAP txs for ${address} | before: ${beforeSignature} | limit: ${limit}`);
@@ -42,12 +42,13 @@ class HeliusClient {
       }
 
       const response = await axios.post(
-        `${this.baseURL}/transactions?api-key=${this.apiKey}`,
+        `${this.baseURL}/transactions/by-address`,
         body,
         {
           headers: {
             'Content-Type': 'application/json',
-          },
+            'api-key': this.apiKey
+          }
         }
       );
 
