@@ -10,7 +10,7 @@ class HeliusClient {
     this.baseURL = 'https://api.helius.xyz/v1';
     this.rpcURL = `https://mainnet.helius.rpcpool.com/?api-key=${this.apiKey}`;
     this.lastRequestTime = 0;
-    this.rateLimitDelay = parseInt(process.env.RATE_LIMIT_DELAY) || 1000;
+    this.rateLimitDelay = parseInt(process.env.RATE_LIMIT_DELAY) || 5000;
 
     console.log('🧠 [HeliusClient] Initialized');
     console.log(`🔑 API Key loaded: ${this.apiKey?.slice(0, 6)}...`);
