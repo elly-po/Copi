@@ -1,14 +1,19 @@
+require('dotenv').config();
 const axios = require('axios');
 
 class HeliusClient {
   constructor() {
     this.apiKey = process.env.HELIUS_API_KEY;
+    if (!this.apiKey) {
+      throw new Error('❌ HELIUS_API_KEY is missing. Please set it in your environment.');
+    }
     this.baseURL = 'https://api.helius.xyz/v1';
     this.rpcURL = `https://mainnet.helius.rpcpool.com/?api-key=${this.apiKey}`;
     this.lastRequestTime = 0;
     this.rateLimitDelay = parseInt(process.env.RATE_LIMIT_DELAY) || 1000;
 
     console.log('🧠 [HeliusClient] Initialized');
+    console.log(`🔑 API Key loaded: ${this.apiKey?.slice(0, 6)}...`);
     console.log('🔗 baseURL:', this.baseURL);
     console.log('🔗 rpcURL:', this.rpcURL);
   }
