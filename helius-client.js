@@ -38,7 +38,7 @@ class HeliusClient extends EventEmitter {
         console.log('⚠️ [WS] No wallets to track');
       }
 
-      this.backoff = 0; // Reset backoff on success
+      this.backoff = 0;
     });
 
     this.ws.on('message', async (message) => {
@@ -49,6 +49,7 @@ class HeliusClient extends EventEmitter {
       if (!signature || !mentionedWallet) return;
 
       console.log(`🧠 [WS] Tx signature received: ${signature}`);
+      console.log(`👤 [Alpha Wallet Triggered] ${mentionedWallet}`);
       await this.handleSignature(signature, mentionedWallet);
     });
 
@@ -64,7 +65,8 @@ class HeliusClient extends EventEmitter {
   }
 
   async handleSignature(signature, alphaWallet) {
-    console.log(`🔎 [RPC] Fetching transaction for ${signature}`);
+    console.log(`🔎 [RPC] Fetching transaction for signature: ${signature}`);
+    console.log(`👤 [Alpha Wallet]: ${alphaWallet}`);
     try {
       const tx = await this.publicRPC.getParsedTransaction(signature, 'processed');
 
@@ -73,10 +75,16 @@ class HeliusClient extends EventEmitter {
         return;
       }
 
+      console.log(`📄 [RPC] Parsed Transaction: ${JSON.stringify(tx.transaction.message, null, 2)}`);
+      console.log(`📊 [RPC] Account Keys: ${tx.transaction.message.accountKeys.map(k => k.pubkey.toBase58())}`);
+      console.log(`🕓 [BlockTime]: ${tx.blockTime}`);
+      console.log(`📋 [Instruction Count]: ${tx.transaction.message.instructions.length}`);
+
       const swapSignal = this.parseSwap(tx);
       if (swapSignal) {
         swapSignal.alphaWallet = alphaWallet;
-        console.log(`📈 [Signal] Swap detected: ${swapSignal.tokenIn} → ${swapSignal.tokenOut}`);
+        console.log(`📈 [Signal] Swap detected! ${swapSignal.tokenIn} → ${swapSignal.tokenOut}`);
+        console.log(`🚨 [Emitting Signal]`, JSON.stringify(swapSignal, null, 2));
         this.emit('tradeSignal', swapSignal);
       } else {
         console.log(`🔕 [Signal] No swap intent found in ${signature}`);
@@ -93,6 +101,8 @@ class HeliusClient extends EventEmitter {
       console.log('⚠️ [Parser] No instructions found');
       return null;
     }
+
+    console.log('📦 [Raw Instructions]:', JSON.stringify(instructions, null, 2));
 
     const swapSignal = {
       signature: tx.transaction.signatures[0],
@@ -118,7 +128,7 @@ class HeliusClient extends EventEmitter {
       if (accounts.length >= 4) {
         swapSignal.tokenIn = accounts[2];
         swapSignal.tokenOut = accounts[3];
-        console.log(`✅ [Parser] Protocol=${swapSignal.protocol}, tokenIn=${swapSignal.tokenIn}, tokenOut=${swapSignal.tokenOut}`);
+        console.log(`✅ [Parser] Detected protocol=${swapSignal.protocol}, tokenIn=${swapSignal.tokenIn}, tokenOut=${swapSignal.tokenOut}`);
         break;
       }
     }
@@ -130,7 +140,7 @@ class HeliusClient extends EventEmitter {
     if (!this.trackedWallets.includes(address)) {
       this.trackedWallets.push(address);
       console.log(`➕ [Tracker] Wallet added: ${address}`);
-      // Optional: re-subscribe dynamically here if needed
+      // Optional dynamic resubscription can be added here
     }
   }
 
